@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { assertTransition } from './task-state.mjs';
 import { authorizeTool } from './policy.mjs';
+import { createToolBroker } from './tools/tool-broker.mjs';
 import { ollamaChat } from './providers/ollama.mjs';
 
 const appRoot = resolve(process.cwd());
@@ -49,6 +50,7 @@ function normalizeConfig(input = {}) {
 }
 const getConfig = async () => normalizeConfig(store.getConfig());
 const saveConfig = (config) => store.saveConfig(normalizeConfig(config));
+const getToolBroker = async () => createToolBroker(projectRoot, await getConfig());
 
 function emit(type, payload) {
   const message = `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -67,68 +69,6 @@ async function bodyOf(request) {
     if (body.length > 100_000) throw new Error('Request body is too large.');
   }
   try { return body ? JSON.parse(body) : {}; } catch { throw new Error('Request body must be valid JSON.'); }
-}
-
-function scopedPath(input = '.') {
-  const target = resolve(projectRoot, input);
-  if (target !== projectRoot && !target.startsWith(projectRoot + '/')) throw new Error('Path is outside the approved project folder.');
-  return target;
-}
-
-async function filesUnder(directory, limit = 160) {
-  const output = [];
-  async function walk(current) {
-    if (output.length >= limit) return;
-    for (const entry of await readdir(current, { withFileTypes: true })) {
-      if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.continuity-agent') continue;
-      const absolute = join(current, entry.name);
-      if (entry.isDirectory()) await walk(absolute);
-      else output.push(relative(projectRoot, absolute));
-      if (output.length >= limit) return;
-    }
-  }
-  await walk(directory);
-  return output;
-}
-
-function safeCommand(command, args, allowed) {
-  if (!allowed.includes(command)) throw new Error(`Command '${command}' is not in the local allowlist.`);
-  if (!Array.isArray(args) || args.some(arg => typeof arg !== 'string' || /[;&|`$<>]/.test(arg))) throw new Error('Command arguments contain a blocked shell character.');
-}
-
-function run(command, args) {
-  return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, { cwd: projectRoot, shell: false, timeout: 30_000, env: { ...process.env, NO_PROXY: '*', no_proxy: '*' } });
-    let stdout = '', stderr = '';
-    child.stdout.on('data', chunk => { stdout += chunk; });
-    child.stderr.on('data', chunk => { stderr += chunk; });
-    child.on('error', rejectRun);
-    child.on('close', code => resolveRun({ code, stdout: stdout.slice(0, 12_000), stderr: stderr.slice(0, 12_000) }));
-  });
-}
-
-async function executeTool(call, config) {
-  const args = call.arguments || {};
-  const policy = authorizeTool(call, config);
-  if (policy.decision !== 'allowed') throw new Error(policy.reason || 'This tool action requires user approval.');
-  if (call.name === 'list_files') return { files: await filesUnder(scopedPath(args.path || '.')) };
-  if (call.name === 'read_file') {
-    const file = scopedPath(args.path);
-    return { path: relative(projectRoot, file), content: (await readFile(file, 'utf8')).slice(0, 30_000) };
-  }
-  if (call.name === 'write_file') {
-    const file = scopedPath(args.path);
-    if (typeof args.content !== 'string') throw new Error('write_file requires text content.');
-    const oldContent = existsSync(file) ? await readFile(file, 'utf8') : '';
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, args.content);
-    return { path: relative(projectRoot, file), changed: oldContent !== args.content, previousBytes: oldContent.length, newBytes: args.content.length };
-  }
-  if (call.name === 'run_command') {
-    safeCommand(args.command, args.args, config.allowedCommands);
-    return run(args.command, args.args);
-  }
-  throw new Error(`Unknown tool: ${call.name}`);
 }
 
 const toolSpec = [
@@ -200,7 +140,8 @@ async function runTask(taskId) {
     messages.push({ role: 'assistant', tool_calls: calls });
     for (const call of calls) {
       try {
-        const result = await executeTool(call.function || call, config);
+        const broker = await getToolBroker();
+        const result = await broker.execute(call.function || call);
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         await updateTask(current, item => { item.steps.push({ at: new Date().toISOString(), kind: 'tool', name: (call.function || call).name, detail: JSON.stringify(result).slice(0, 1200) }); checkpoint(item, `Tool completed: ${(call.function || call).name}`); });
       } catch (error) {
