@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { assertTransition } from './task-state.mjs';
 import { authorizeTool } from './policy.mjs';
+import { ollamaChat } from './providers/ollama.mjs';
 
 const appRoot = resolve(process.cwd());
 const dataRoot = join(appRoot, '.continuity-agent');
@@ -137,11 +138,6 @@ const toolSpec = [
   { type: 'function', function: { name: 'run_command', description: 'Run an allowlisted command without a shell. Available commands are provided in the system message.', parameters: { type: 'object', properties: { command: { type: 'string' }, args: { type: 'array', items: { type: 'string' } } }, required: ['command', 'args'] } } }
 ];
 
-async function ollamaChat(endpoint, model, messages) {
-  const response = await fetch(`${endpoint}/api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, messages, tools: toolSpec, stream: false, options: { temperature: 0.15 } }), signal: AbortSignal.timeout(90_000) });
-  if (!response.ok) throw new Error(`Ollama returned ${response.status}: ${(await response.text()).slice(0, 400)}`);
-  return response.json();
-}
 
 function checkpoint(task, event) {
   task.checkpoints.push({ id: randomUUID(), createdAt: new Date().toISOString(), event, status: task.status, activeModel: task.activeModel, step: task.steps.length, workspace: projectRoot });
@@ -183,7 +179,7 @@ async function runTask(taskId) {
     while (!reply && modelIndex < models.length) {
       const model = models[modelIndex];
       try {
-        reply = await ollamaChat(config.endpoint, model, messages);
+        reply = await ollamaChat(config.endpoint, model, messages, toolSpec);
         if (current.activeModel !== model) await updateTask(current, item => { item.activeModel = model; item.switches.push({ at: new Date().toISOString(), model, reason: 'Previous local model was unavailable or failed.' }); item.message = `Now working with ${model}.`; checkpoint(item, `Switched to ${model}`); });
       } catch (error) {
         modelIndex += 1;
