@@ -7,6 +7,7 @@ import {
 } from '../router/retry-policy.mjs';
 import { createHandoffPacket } from './handoff.mjs';
 import { validateHandoffPacket } from './handoff-validation.mjs';
+import { computeCheckpointHash } from '../store.mjs';
 
 export function createOrchestrator({
   getTasks,
@@ -18,18 +19,33 @@ export function createOrchestrator({
   toolSpec,
   projectRoot,
   emit,
-  validateHandoff = validateHandoffPacket
+  validateHandoff = validateHandoffPacket,
+  store
 }) {
   function checkpoint(task, event) {
-    task.checkpoints.push({
+    const cpData = {
       id: randomUUID(),
+      taskId: task.id,
       createdAt: new Date().toISOString(),
       event,
       status: task.status,
       activeModel: task.activeModel,
       step: task.steps.length,
       workspace: projectRoot
-    });
+    };
+    const integrityHash = computeCheckpointHash(cpData);
+    const cp = {
+      ...cpData,
+      integrityHash
+    };
+    task.checkpoints.push(cp);
+
+    if (store?.recordCheckpoint && !store?.recordTaskTransition) {
+      store.recordCheckpoint({
+        ...cp,
+        taskId: task.id
+      });
+    }
   }
 
   async function updateTask(task, mutator) {
@@ -39,6 +55,7 @@ export function createOrchestrator({
     if (index < 0) return;
 
     const previousStatus = tasks[index].status;
+    const checkpointsBefore = tasks[index].checkpoints ? tasks[index].checkpoints.length : 0;
 
     mutator(tasks[index]);
 
@@ -48,6 +65,40 @@ export function createOrchestrator({
     );
 
     tasks[index].updatedAt = new Date().toISOString();
+
+    const newCheckpoints = tasks[index].checkpoints
+      ? tasks[index].checkpoints.slice(checkpointsBefore)
+      : [];
+
+    if (store?.recordTaskTransition) {
+      store.recordTaskTransition({
+        task: tasks[index],
+        previousStatus,
+        nextStatus: tasks[index].status,
+        reason: tasks[index].message || `Transition to ${tasks[index].status}`,
+        checkpoints: newCheckpoints
+      });
+    } else {
+      if (store?.recordCheckpoint) {
+        for (const cp of newCheckpoints) {
+          store.recordCheckpoint({ ...cp, taskId: tasks[index].id });
+        }
+      }
+
+      if (store?.recordTaskEvent && previousStatus !== tasks[index].status) {
+        store.recordTaskEvent({
+          taskId: tasks[index].id,
+          previousStatus,
+          nextStatus: tasks[index].status,
+          timestamp: tasks[index].updatedAt,
+          reason: tasks[index].message || `Transition to ${tasks[index].status}`
+        });
+      }
+
+      if (store?.upsertTask) {
+        store.upsertTask(tasks[index]);
+      }
+    }
 
     await saveTasks(tasks);
     emit('task', tasks[index]);
@@ -406,6 +457,66 @@ export function createOrchestrator({
       });
 
       for (const call of calls) {
+        const toolFn = call.function || call;
+        const toolName = toolFn.name;
+        let toolArgs = toolFn.arguments;
+        if (typeof toolArgs === 'string') {
+          try {
+            toolArgs = JSON.parse(toolArgs);
+          } catch {
+            toolArgs = {};
+          }
+        }
+        toolArgs = toolArgs || {};
+
+        // Check if tool action was already successfully executed (deterministic recovery)
+        if (store?.getCompletedToolAction) {
+          const completed = store.getCompletedToolAction(taskId, toolName, toolArgs);
+          if (completed && completed.resultSummary) {
+            let replayedResult;
+            try {
+              replayedResult = JSON.parse(completed.resultSummary);
+            } catch {
+              replayedResult = completed.resultSummary;
+            }
+
+            messages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: JSON.stringify(replayedResult)
+            });
+
+            await updateTask(current, item => {
+              item.steps.push({
+                at: new Date().toISOString(),
+                kind: 'tool',
+                name: toolName,
+                detail: JSON.stringify(replayedResult).slice(0, 1200),
+                replayed: true
+              });
+
+              checkpoint(
+                item,
+                `Tool replayed: ${toolName}`
+              );
+            });
+
+            continue;
+          }
+        }
+
+        let actionRecord = null;
+        if (store?.recordToolAction) {
+          actionRecord = store.recordToolAction({
+            taskId,
+            toolName,
+            args: toolArgs,
+            policyDecision: 'allowed',
+            status: 'pending',
+            startedAt: new Date().toISOString()
+          });
+        }
+
         try {
           const broker =
             await toolBrokerFactory();
@@ -413,6 +524,15 @@ export function createOrchestrator({
           const result = await broker.execute(
             call.function || call
           );
+
+          if (store?.recordToolAction && actionRecord) {
+            store.recordToolAction({
+              ...actionRecord,
+              status: 'success',
+              finishedAt: new Date().toISOString(),
+              resultSummary: JSON.stringify(result).slice(0, 5000)
+            });
+          }
 
           messages.push({
             role: 'tool',
@@ -425,7 +545,7 @@ export function createOrchestrator({
               at: new Date().toISOString(),
               kind: 'tool',
               name:
-                (call.function || call).name,
+                toolName,
               detail:
                 JSON.stringify(result).slice(
                   0,
@@ -435,10 +555,19 @@ export function createOrchestrator({
 
             checkpoint(
               item,
-              `Tool completed: ${(call.function || call).name}`
+              `Tool completed: ${toolName}`
             );
           });
         } catch (error) {
+          if (store?.recordToolAction && actionRecord) {
+            store.recordToolAction({
+              ...actionRecord,
+              status: 'failure',
+              finishedAt: new Date().toISOString(),
+              error: String(error.message).slice(0, 1000)
+            });
+          }
+
           messages.push({
             role: 'tool',
             tool_call_id: call.id,
@@ -452,14 +581,14 @@ export function createOrchestrator({
               at: new Date().toISOString(),
               kind: 'tool_error',
               name:
-                (call.function || call).name,
+                toolName,
               detail:
                 String(error.message)
             });
 
             checkpoint(
               item,
-              `Tool denied/failed: ${(call.function || call).name}`
+              `Tool denied/failed: ${toolName}`
             );
           });
         }

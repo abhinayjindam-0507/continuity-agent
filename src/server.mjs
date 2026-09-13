@@ -258,7 +258,8 @@ const orchestrator = createOrchestrator({
   modelRouter,
   toolSpec,
   projectRoot,
-  emit
+  emit,
+  store
 });
 
 const server = createServer(async (request, response) => {
