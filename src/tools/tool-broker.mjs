@@ -1,9 +1,10 @@
 import { resolve } from 'node:path';
-import { spawn } from 'node:child_process';
 import { authorizeTool } from '../policy.mjs';
 import { createFilesystemBroker } from './filesystem-broker.mjs';
+import { createTerminalBroker } from './terminal-broker.mjs';
 
 export { createFilesystemBroker } from './filesystem-broker.mjs';
+export { createTerminalBroker } from './terminal-broker.mjs';
 
 export function createToolBroker(projectRoot, config, brokerOptions = {}) {
   const root = resolve(projectRoot);
@@ -47,60 +48,11 @@ export function createToolBroker(projectRoot, config, brokerOptions = {}) {
     }
   });
 
-  function scopedPath(input = '.') {
-    return fsBroker.resolvePath(input, { allowRoot: true }).absolutePath;
-  }
-
-  function safeCommand(command, args, allowed) {
-    if (!allowed.includes(command)) {
-      throw new Error(`Command '${command}' is not in the local allowlist.`);
-    }
-
-    if (
-      !Array.isArray(args) ||
-      args.some(
-        arg => typeof arg !== 'string' || /[;&|`$<>]/.test(arg)
-      )
-    ) {
-      throw new Error('Command arguments contain a blocked shell character.');
-    }
-  }
-
-  function run(command, args) {
-    return new Promise((resolveRun, rejectRun) => {
-      const child = spawn(command, args, {
-        cwd: root,
-        shell: false,
-        timeout: 30_000,
-        env: {
-          ...process.env,
-          NO_PROXY: '*',
-          no_proxy: '*'
-        }
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      child.stdout.on('data', chunk => {
-        stdout += chunk;
-      });
-
-      child.stderr.on('data', chunk => {
-        stderr += chunk;
-      });
-
-      child.on('error', rejectRun);
-
-      child.on('close', code => {
-        resolveRun({
-          code,
-          stdout: stdout.slice(0, 12_000),
-          stderr: stderr.slice(0, 12_000)
-        });
-      });
-    });
-  }
+  const termBroker = createTerminalBroker({
+    projectRoot: root,
+    ...brokerOptions,
+    allowedCommands: config.allowedCommands || []
+  });
 
   async function execute(call) {
     const args = call.arguments || {};
@@ -147,8 +99,7 @@ export function createToolBroker(projectRoot, config, brokerOptions = {}) {
       if (policy.decision !== 'allowed') {
         throw new Error(policy.reason || 'This tool action requires user approval.');
       }
-      safeCommand(args.command, args.args, config.allowedCommands);
-      return run(args.command, args.args);
+      return termBroker.execute(args.command, args.args);
     }
 
     throw new Error(`Unknown tool: ${call.name}`);
@@ -156,6 +107,7 @@ export function createToolBroker(projectRoot, config, brokerOptions = {}) {
 
   return {
     execute,
-    filesystemBroker: fsBroker
+    filesystemBroker: fsBroker,
+    terminalBroker: termBroker
   };
 }
