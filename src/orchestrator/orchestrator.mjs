@@ -7,6 +7,7 @@ export function createOrchestrator({
   getConfig,
   toolBrokerFactory,
   modelAdapter,
+  modelRouter,
   toolSpec,
   projectRoot,
   emit
@@ -47,13 +48,22 @@ export function createOrchestrator({
     if (!task || task.status === 'running') return;
 
     const config = await getConfig();
-    const models = [config.preferredModel, ...config.fallbacks].filter(Boolean);
+
+    const selectedModel = modelRouter?.select({
+      capabilities: ['text', 'tools'],
+      privacyTier: 'local_only',
+      requireAutomaticFallback: false
+    });
+
+    const models = selectedModel
+      ? [selectedModel.modelId]
+      : [config.preferredModel, ...config.fallbacks].filter(Boolean);
 
     if (!models.length) {
       await updateTask(task, item => {
         item.status = 'needs_setup';
-        item.message = 'Add an installed local Ollama model in Settings before starting.';
-        checkpoint(item, 'No local model configured');
+        item.message = 'No eligible local Ollama model is available.';
+        checkpoint(item, 'No eligible local model configured');
       });
       return;
     }
@@ -125,7 +135,8 @@ export function createOrchestrator({
       if (!reply) {
         await updateTask(current, item => {
           item.status = 'paused';
-          item.message = 'All configured local models were unavailable. Progress is checkpointed.';
+          item.message =
+            'All configured local models were unavailable. Progress is checkpointed.';
           checkpoint(item, 'All local fallbacks unavailable');
         });
         return;
@@ -145,7 +156,8 @@ export function createOrchestrator({
       if (!calls.length) {
         await updateTask(current, item => {
           item.status = 'completed';
-          item.message = message.content || 'The local model completed its run.';
+          item.message =
+            message.content || 'The local model completed its run.';
           item.steps.push({
             at: new Date().toISOString(),
             kind: 'assistant',

@@ -106,3 +106,33 @@ test('missing model lookup returns null', () => {
     null
   );
 });
+
+test('registers a probed Ollama model without granting automatic fallback', () => {
+  const registry = createCapabilityRegistry();
+
+  const probedModel = {
+    provider: 'ollama',
+    modelId: 'qwen3:4b',
+    version: 'qwen3:4b',
+    capabilities: ['text', 'tools'],
+    contextLimit: 262144,
+    privacyTier: 'local_only',
+    health: 'healthy',
+    routingClass: 'support_only',
+    automaticFallbackAllowed: false
+  };
+
+  const registered = registry.upsert(probedModel);
+
+  assert.equal(registered.provider, 'ollama');
+  assert.equal(registered.modelId, 'qwen3:4b');
+  assert.equal(registered.contextLimit, 262144);
+  assert.equal(registered.privacyTier, 'local_only');
+  assert.equal(registered.routingClass, 'support_only');
+  assert.equal(registered.automaticFallbackAllowed, false);
+
+  assert.deepEqual(
+    registry.get('ollama', 'qwen3:4b', 'qwen3:4b'),
+    registered
+  );
+});

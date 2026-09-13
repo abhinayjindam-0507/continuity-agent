@@ -166,3 +166,42 @@ test('selection returns null when no model is eligible', () => {
 
   assert.equal(selected, null);
 });
+
+test('discovered Ollama models remain ineligible for automatic fallback by default', () => {
+  const registry = createCapabilityRegistry([
+    {
+      provider: 'ollama',
+      modelId: 'qwen3:4b',
+      version: 'qwen3:4b',
+      capabilities: ['text', 'tools'],
+      contextLimit: 262144,
+      privacyTier: 'local_only',
+      health: 'healthy',
+      routingClass: 'support_only',
+      automaticFallbackAllowed: false
+    }
+  ]);
+
+  const router = createModelRouter({
+    registry,
+    config: {
+      fallbackOrder: ['qwen3:4b']
+    }
+  });
+
+  const eligible = router.getEligibleModels({
+    capabilities: ['text', 'tools'],
+    privacyTier: 'local_only',
+    requireAutomaticFallback: true
+  });
+
+  assert.deepEqual(eligible, []);
+  assert.equal(
+    router.select({
+      capabilities: ['text', 'tools'],
+      privacyTier: 'local_only',
+      requireAutomaticFallback: true
+    }),
+    null
+  );
+});
