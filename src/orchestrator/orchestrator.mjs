@@ -5,6 +5,7 @@ import {
   canRetry,
   nextRetryDelayMs
 } from '../router/retry-policy.mjs';
+import { createHandoffPacket } from './handoff.mjs';
 
 export function createOrchestrator({
   getTasks,
@@ -173,13 +174,16 @@ export function createOrchestrator({
 
             if (current.activeModel !== model) {
               await updateTask(current, item => {
+                const handoffPacket = createHandoffPacket(item);
+
                 item.activeModel = model;
 
                 item.switches.push({
                   at: new Date().toISOString(),
                   model,
                   reason:
-                    'Previous local model was unavailable or failed.'
+                    'Previous local model was unavailable or failed.',
+                  handoffPacket
                 });
 
                 item.message =
@@ -261,23 +265,26 @@ export function createOrchestrator({
               uniqueModels[modelIndex];
 
             await updateTask(current, item => {
-              item.activeModel = nextModel;
+                const handoffPacket = createHandoffPacket(item);
 
-              item.switches.push({
-                at: new Date().toISOString(),
-                model: nextModel,
-                reason:
-                  `Fallback after ${model} failed: ${error.message}`
+                item.activeModel = nextModel;
+
+                item.switches.push({
+                  at: new Date().toISOString(),
+                  model: nextModel,
+                  reason:
+                    `Fallback after ${model} failed: ${error.message}`,
+                  handoffPacket
+                });
+
+                item.message =
+                  `Switching from ${model} to ${nextModel}.`;
+
+                checkpoint(
+                  item,
+                  `Fallback to ${nextModel}`
+                );
               });
-
-              item.message =
-                `Switching from ${model} to ${nextModel}.`;
-
-              checkpoint(
-                item,
-                `Fallback to ${nextModel}`
-              );
-            });
 
             break;
           }
