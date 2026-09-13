@@ -1,10 +1,10 @@
 export function authorizeTool(call, config) {
   const name = call.name;
   if (name === 'list_files' || name === 'read_file') return { decision: 'allowed', risk: 'low' };
-  if (name === 'write_file') {
+  if (name === 'write_file' || name === 'patch_file') {
     return config.allowWrites
       ? { decision: 'requires_approval', risk: 'high', reason: 'File changes require an explicit, parameter-bound approval flow.' }
-      : { decision: 'denied', risk: 'high', reason: 'File writes are disabled by local policy.' };
+      : { decision: 'denied', risk: 'high', reason: 'File modifications are disabled by local policy.' };
   }
   if (name === 'run_command') {
     const command = call.arguments?.command;

@@ -1,51 +1,54 @@
-import { existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { authorizeTool } from '../policy.mjs';
+import { createFilesystemBroker } from './filesystem-broker.mjs';
 
-export function createToolBroker(projectRoot, config) {
+export { createFilesystemBroker } from './filesystem-broker.mjs';
+
+export function createToolBroker(projectRoot, config, brokerOptions = {}) {
   const root = resolve(projectRoot);
+  const fsBroker = createFilesystemBroker({
+    projectRoot: root,
+    allowAbsolute: false,
+    ...brokerOptions,
+    authorizeWrite: async (details) => {
+      const writeCall = {
+        name: 'write_file',
+        arguments: {
+          path: details.path,
+          content: details.content
+        }
+      };
+      const policy = authorizeTool(writeCall, config);
+      if (policy.decision === 'allowed') {
+        return true;
+      }
+      return {
+        approved: false,
+        reason: policy.reason || 'Write operation denied by policy'
+      };
+    },
+    authorizePatch: async (details) => {
+      const patchCall = {
+        name: 'patch_file',
+        arguments: {
+          path: details.path,
+          patch: details.patch
+        }
+      };
+      const policy = authorizeTool(patchCall, config);
+      if (policy.decision === 'allowed') {
+        return true;
+      }
+      return {
+        approved: false,
+        reason: policy.reason || 'Patch operation denied by policy'
+      };
+    }
+  });
 
   function scopedPath(input = '.') {
-    const target = resolve(root, input);
-
-    if (target !== root && !target.startsWith(root + '/')) {
-      throw new Error('Path is outside the approved project folder.');
-    }
-
-    return target;
-  }
-
-  async function filesUnder(directory, limit = 160) {
-    const output = [];
-
-    async function walk(current) {
-      if (output.length >= limit) return;
-
-      for (const entry of await readdir(current, { withFileTypes: true })) {
-        if (
-          entry.name === '.git' ||
-          entry.name === 'node_modules' ||
-          entry.name === '.continuity-agent'
-        ) {
-          continue;
-        }
-
-        const absolute = join(current, entry.name);
-
-        if (entry.isDirectory()) {
-          await walk(absolute);
-        } else {
-          output.push(relative(root, absolute));
-        }
-
-        if (output.length >= limit) return;
-      }
-    }
-
-    await walk(directory);
-    return output;
+    return fsBroker.resolvePath(input, { allowRoot: true }).absolutePath;
   }
 
   function safeCommand(command, args, allowed) {
@@ -101,52 +104,49 @@ export function createToolBroker(projectRoot, config) {
 
   async function execute(call) {
     const args = call.arguments || {};
-    const policy = authorizeTool(call, config);
-
-    if (policy.decision !== 'allowed') {
-      throw new Error(
-        policy.reason || 'This tool action requires user approval.'
-      );
-    }
 
     if (call.name === 'list_files') {
-      return {
-        files: await filesUnder(scopedPath(args.path || '.'))
-      };
+      const policy = authorizeTool(call, config);
+      if (policy.decision !== 'allowed') {
+        throw new Error(policy.reason || 'This tool action requires user approval.');
+      }
+      return fsBroker.listFiles(args.path || '.');
     }
 
     if (call.name === 'read_file') {
-      const file = scopedPath(args.path);
+      const policy = authorizeTool(call, config);
+      if (policy.decision !== 'allowed') {
+        throw new Error(policy.reason || 'This tool action requires user approval.');
+      }
+      const result = await fsBroker.readFile(args.path);
 
       return {
-        path: relative(root, file),
-        content: (await readFile(file, 'utf8')).slice(0, 30_000)
+        path: result.path,
+        content: result.content.slice(0, 30_000)
       };
     }
 
     if (call.name === 'write_file') {
-      const file = scopedPath(args.path);
-
       if (typeof args.content !== 'string') {
         throw new Error('write_file requires text content.');
       }
 
-      const oldContent = existsSync(file)
-        ? await readFile(file, 'utf8')
-        : '';
+      return fsBroker.writeFile(args.path, args.content);
+    }
 
-      await mkdir(dirname(file), { recursive: true });
-      await writeFile(file, args.content);
-
-      return {
-        path: relative(root, file),
-        changed: oldContent !== args.content,
-        previousBytes: oldContent.length,
-        newBytes: args.content.length
+    if (call.name === 'patch_file') {
+      const patchSpec = args.patch || {
+        targetContent: args.targetContent,
+        replacementContent: args.replacementContent
       };
+      return fsBroker.patchFile(args.path, patchSpec);
     }
 
     if (call.name === 'run_command') {
+      const policy = authorizeTool(call, config);
+      if (policy.decision !== 'allowed') {
+        throw new Error(policy.reason || 'This tool action requires user approval.');
+      }
       safeCommand(args.command, args.args, config.allowedCommands);
       return run(args.command, args.args);
     }
@@ -155,6 +155,7 @@ export function createToolBroker(projectRoot, config) {
   }
 
   return {
-    execute
+    execute,
+    filesystemBroker: fsBroker
   };
 }
