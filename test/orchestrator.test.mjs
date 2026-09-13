@@ -24,7 +24,7 @@ test('orchestrator starts a task with the configured local model', async () => {
 
   const orchestrator = createOrchestrator({
     getTasks: async () => tasks,
-    saveTasks: async (nextTasks) => {
+    saveTasks: async nextTasks => {
       tasks.splice(0, tasks.length, ...nextTasks);
       savedEvents.push(nextTasks[0]);
     },
@@ -91,7 +91,7 @@ test('orchestrator selects the model through the model router', async () => {
 
   const orchestrator = createOrchestrator({
     getTasks: async () => tasks,
-    saveTasks: async (nextTasks) => {
+    saveTasks: async nextTasks => {
       tasks.splice(0, tasks.length, ...nextTasks);
     },
     getConfig: async () => ({
@@ -108,7 +108,17 @@ test('orchestrator selects the model through the model router', async () => {
       execute: async () => ({ ok: true })
     }),
     modelRouter: {
-      select: (requirements) => {
+      getEligibleModels: requirements => {
+        assert.deepEqual(requirements, {
+          capabilities: ['text', 'tools'],
+          privacyTier: 'local_only',
+          requireAutomaticFallback: true
+        });
+
+        return [];
+      },
+
+      select: requirements => {
         routerSelections += 1;
 
         assert.deepEqual(requirements, {
@@ -131,6 +141,7 @@ test('orchestrator selects the model through the model router', async () => {
       }
     },
     modelAdapter: async (endpoint, model, messages) => {
+      assert.equal(endpoint, 'http://127.0.0.1:11434');
       assert.equal(model, 'qwen3:4b');
       assert.equal(messages.at(-1).content, 'Use the routed model');
 
@@ -151,4 +162,133 @@ test('orchestrator selects the model through the model router', async () => {
   assert.equal(routerSelections, 1);
   assert.equal(tasks[0].activeModel, 'qwen3:4b');
   assert.equal(tasks[0].status, 'completed');
+});
+
+test('orchestrator falls back when the selected model is unavailable', async () => {
+  const tasks = [
+    {
+      id: 'task-fallback-1',
+      goal: 'Continue using the fallback model',
+      status: 'queued',
+      message: 'Waiting to start.',
+      activeModel: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    }
+  ];
+
+  const attemptedModels = [];
+
+  const orchestrator = createOrchestrator({
+    getTasks: async () => tasks,
+
+    saveTasks: async nextTasks => {
+      tasks.splice(0, tasks.length, ...nextTasks);
+    },
+
+    getConfig: async () => ({
+      provider: 'ollama',
+      endpoint: 'http://127.0.0.1:11434',
+      preferredModel: '',
+      fallbacks: [],
+      maxSteps: 1,
+      allowedCommands: [],
+      networkToolsEnabled: false,
+      allowWrites: false
+    }),
+
+    toolBrokerFactory: async () => ({
+      execute: async () => ({ ok: true })
+    }),
+
+    modelRouter: {
+      getEligibleModels: requirements => {
+        assert.deepEqual(requirements, {
+          capabilities: ['text', 'tools'],
+          privacyTier: 'local_only',
+          requireAutomaticFallback: true
+        });
+
+        return [
+          {
+            provider: 'ollama',
+            modelId: 'primary-model',
+            version: 'primary-model',
+            capabilities: ['text', 'tools'],
+            contextLimit: 32768,
+            privacyTier: 'local_only',
+            health: 'healthy',
+            routingClass: 'support_only',
+            automaticFallbackAllowed: true
+          },
+          {
+            provider: 'ollama',
+            modelId: 'fallback-model',
+            version: 'fallback-model',
+            capabilities: ['text', 'tools'],
+            contextLimit: 32768,
+            privacyTier: 'local_only',
+            health: 'healthy',
+            routingClass: 'fallback',
+            automaticFallbackAllowed: true
+          }
+        ];
+      },
+
+      select: requirements => {
+        assert.deepEqual(requirements, {
+          capabilities: ['text', 'tools'],
+          privacyTier: 'local_only',
+          requireAutomaticFallback: false
+        });
+
+        return {
+          provider: 'ollama',
+          modelId: 'primary-model',
+          version: 'primary-model',
+          capabilities: ['text', 'tools'],
+          contextLimit: 32768,
+          privacyTier: 'local_only',
+          health: 'healthy',
+          routingClass: 'support_only',
+          automaticFallbackAllowed: true
+        };
+      }
+    },
+
+    modelAdapter: async (_endpoint, model) => {
+      attemptedModels.push(model);
+
+      if (model === 'primary-model') {
+        const error = new Error('model unavailable');
+        error.type = 'unavailable';
+        throw error;
+      }
+
+      return {
+        message: {
+          content: 'Fallback model completed the task.',
+          tool_calls: []
+        }
+      };
+    },
+
+    toolSpec: [],
+    projectRoot: '/tmp/test-project',
+    emit: () => {}
+  });
+
+  await orchestrator.runTask('task-fallback-1');
+
+  assert.deepEqual(
+    attemptedModels,
+    ['primary-model', 'fallback-model']
+  );
+
+  assert.equal(tasks[0].status, 'completed');
+  assert.equal(tasks[0].activeModel, 'fallback-model');
+  assert.equal(tasks[0].switches.length, 1);
 });

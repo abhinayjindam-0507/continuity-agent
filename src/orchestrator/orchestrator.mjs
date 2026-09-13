@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { assertTransition } from '../task-state.mjs';
+import { shouldFallbackProviderError } from '../router/fallback-policy.mjs';
 
 export function createOrchestrator({
   getTasks,
@@ -33,7 +34,6 @@ export function createOrchestrator({
     const previousStatus = tasks[index].status;
     mutator(tasks[index]);
 
-    // Lifecycle validation remains the existing authority.
     assertTransition(previousStatus, tasks[index].status);
 
     tasks[index].updatedAt = new Date().toISOString();
@@ -49,17 +49,33 @@ export function createOrchestrator({
 
     const config = await getConfig();
 
-    const selectedModel = modelRouter?.select({
+    const routingRequirements = {
       capabilities: ['text', 'tools'],
-      privacyTier: 'local_only',
+      privacyTier: 'local_only'
+    };
+
+    const selectedModel = modelRouter?.select({
+      ...routingRequirements,
       requireAutomaticFallback: false
     });
 
-    const models = selectedModel
-      ? [selectedModel.modelId]
-      : [config.preferredModel, ...config.fallbacks].filter(Boolean);
+    const fallbackModels =
+      modelRouter?.getEligibleModels({
+        ...routingRequirements,
+        requireAutomaticFallback: true
+      }) ?? [];
 
-    if (!models.length) {
+    const models = [
+      selectedModel?.modelId,
+      ...fallbackModels.map(model => model.modelId),
+      ...(selectedModel
+        ? []
+        : [config.preferredModel, ...config.fallbacks])
+    ].filter(Boolean);
+
+    const uniqueModels = [...new Set(models)];
+
+    if (!uniqueModels.length) {
       await updateTask(task, item => {
         item.status = 'needs_setup';
         item.message = 'No eligible local Ollama model is available.';
@@ -71,7 +87,7 @@ export function createOrchestrator({
     await updateTask(task, item => {
       item.status = 'running';
       item.message = 'Preparing a local-only agent run.';
-      item.activeModel = models[0];
+      item.activeModel = uniqueModels[0];
       checkpoint(item, 'Run started');
     });
 
@@ -88,23 +104,33 @@ export function createOrchestrator({
           `Do not claim success without running relevant tests. ` +
           `If a task needs risky/destructive action, explain instead of doing it.`
       },
-      { role: 'user', content: active.goal }
+      {
+        role: 'user',
+        content: active.goal
+      }
     ];
 
     let modelIndex = 0;
 
     for (let step = 0; step < config.maxSteps; step += 1) {
-      const current = (await getTasks()).find(item => item.id === taskId);
+      const current = (await getTasks()).find(
+        item => item.id === taskId
+      );
 
       if (!current || current.status !== 'running') return;
 
       let reply;
 
-      while (!reply && modelIndex < models.length) {
-        const model = models[modelIndex];
+      while (!reply && modelIndex < uniqueModels.length) {
+        const model = uniqueModels[modelIndex];
 
         try {
-          reply = await modelAdapter(config.endpoint, model, messages, toolSpec);
+          reply = await modelAdapter(
+            config.endpoint,
+            model,
+            messages,
+            toolSpec
+          );
 
           if (current.activeModel !== model) {
             await updateTask(current, item => {
@@ -112,15 +138,14 @@ export function createOrchestrator({
               item.switches.push({
                 at: new Date().toISOString(),
                 model,
-                reason: 'Previous local model was unavailable or failed.'
+                reason:
+                  'Previous local model was unavailable or failed.'
               });
               item.message = `Now working with ${model}.`;
               checkpoint(item, `Switched to ${model}`);
             });
           }
         } catch (error) {
-          modelIndex += 1;
-
           await updateTask(current, item => {
             item.steps.push({
               at: new Date().toISOString(),
@@ -129,6 +154,38 @@ export function createOrchestrator({
               detail: String(error.message)
             });
           });
+
+          const canFallback =
+            shouldFallbackProviderError(error) &&
+            modelIndex + 1 < uniqueModels.length;
+
+          if (!canFallback) {
+            await updateTask(current, item => {
+              item.status = 'paused';
+              item.message =
+                `Model ${model} failed and no safe fallback is available. Progress is checkpointed.`;
+              checkpoint(item, `Model failure: ${model}`);
+            });
+
+            return;
+          }
+
+          modelIndex += 1;
+
+          const nextModel = uniqueModels[modelIndex];
+
+          await updateTask(current, item => {
+            item.activeModel = nextModel;
+            item.switches.push({
+              at: new Date().toISOString(),
+              model: nextModel,
+              reason:
+                `Fallback after ${model} failed: ${error.message}`
+            });
+            item.message =
+              `Switching from ${model} to ${nextModel}.`;
+            checkpoint(item, `Fallback to ${nextModel}`);
+          });
         }
       }
 
@@ -136,8 +193,8 @@ export function createOrchestrator({
         await updateTask(current, item => {
           item.status = 'paused';
           item.message =
-            'All configured local models were unavailable. Progress is checkpointed.';
-          checkpoint(item, 'All local fallbacks unavailable');
+            'No safe local fallback is available. Progress is checkpointed.';
+          checkpoint(item, 'All safe local fallbacks exhausted');
         });
         return;
       }
@@ -157,7 +214,8 @@ export function createOrchestrator({
         await updateTask(current, item => {
           item.status = 'completed';
           item.message =
-            message.content || 'The local model completed its run.';
+            message.content ||
+            'The local model completed its run.';
           item.steps.push({
             at: new Date().toISOString(),
             kind: 'assistant',
@@ -177,7 +235,9 @@ export function createOrchestrator({
       for (const call of calls) {
         try {
           const broker = await toolBrokerFactory();
-          const result = await broker.execute(call.function || call);
+          const result = await broker.execute(
+            call.function || call
+          );
 
           messages.push({
             role: 'tool',
@@ -224,7 +284,9 @@ export function createOrchestrator({
       }
     }
 
-    const latest = (await getTasks()).find(item => item.id === taskId);
+    const latest = (await getTasks()).find(
+      item => item.id === taskId
+    );
 
     if (latest) {
       await updateTask(latest, item => {
