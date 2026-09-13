@@ -13,13 +13,19 @@ import {
 } from './providers/ollama-catalog.mjs';
 import { createCapabilityRegistry } from './router/capability-registry.mjs';
 import { createModelRouter } from './router/model-router.mjs';
+import { createEventEmitter } from './events/event-emitter.mjs';
+import { createOrchestratorBridge } from './events/orchestrator-bridge.mjs';
+import { sanitizeTaskSnapshot } from './events/event-schema.mjs';
 
 const appRoot = resolve(process.cwd());
 const dataRoot = join(appRoot, '.continuity-agent');
 const publicFile = join(appRoot, 'src', 'index.html');
 const port = Number(process.env.PORT || 4317);
 const projectRoot = resolve(process.env.PROJECT_ROOT || appRoot);
-const clients = new Set();
+
+// Real-time event layer
+const eventEmitter = createEventEmitter();
+
 
 const defaultConfig = {
   provider: 'ollama',
@@ -146,12 +152,35 @@ await refreshConfiguredOllamaCapabilities();
 const getToolBroker = async () =>
   createToolBroker(projectRoot, await getConfig());
 
-function emit(type, payload) {
-  const message =
-    `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
+// Orchestrator bridge translates generic emit('task', task) calls into typed events
+const bridge = createOrchestratorBridge(eventEmitter);
 
-  for (const response of clients) {
-    response.write(message);
+// Track previous task statuses so the bridge can emit state_changed events
+const taskStatusCache = new Map();
+
+function emit(type, payload) {
+  if (type === 'task' && payload && payload.id) {
+    const previousStatus = taskStatusCache.get(payload.id);
+    taskStatusCache.set(payload.id, payload.status);
+    bridge.onTaskUpdated(payload, previousStatus);
+    // Legacy support for index.html
+    eventEmitter.broadcastRaw(`event: task\ndata: ${JSON.stringify(payload)}\n\n`);
+  } else if (type === 'checkpoint' && payload?.taskId && payload?.checkpoint) {
+    bridge.onCheckpointCreated(payload.taskId, payload.checkpoint);
+  } else if (type === 'tool_started' && payload?.taskId && payload?.toolName) {
+    bridge.onToolStarted(payload.taskId, payload.toolName);
+  } else if (type === 'tool_completed' && payload?.taskId && payload?.toolName) {
+    bridge.onToolCompleted(payload.taskId, payload.toolName, payload.detail);
+  } else if (type === 'tool_failed' && payload?.taskId && payload?.toolName) {
+    bridge.onToolFailed(payload.taskId, payload.toolName, payload.error);
+  } else if (type === 'model_switching' && payload?.taskId) {
+    bridge.onModelSwitching(payload.taskId, payload.previousModel, payload.targetModel, payload.reason);
+  } else if (type === 'model_switched' && payload?.taskId) {
+    bridge.onModelSwitched(payload.taskId, payload.previousModel, payload.targetModel);
+  } else if (type === 'recovery_required' && payload?.taskId) {
+    bridge.onRecoveryRequired(payload.taskId, payload.reason);
+  } else if (type === 'approval_required' && payload?.taskId) {
+    bridge.onApprovalRequired(payload.taskId, payload.message);
   }
 }
 
@@ -270,16 +299,25 @@ const server = createServer(async (request, response) => {
     );
 
     if (url.pathname === '/events') {
+      // Parse Last-Event-ID header or query param for reconnect support
+      const lastEventIdHeader = request.headers['last-event-id'];
+      const lastSeqParam = url.searchParams.get('lastSeq');
+      const lastSeq = Number(lastEventIdHeader || lastSeqParam) || 0;
+
       response.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
-        connection: 'keep-alive'
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no'
       });
 
-      clients.add(response);
-      response.write('event: ready\ndata: {}\n\n');
+      // Send SSE comment with current seq so the client knows its stream position
+      const currentSeq = eventEmitter.getLatestSeq();
+      response.write(`: ready seq=${currentSeq}\n\n`);
 
-      request.on('close', () => clients.delete(response));
+      const unsubscribe = eventEmitter.subscribe(response, lastSeq);
+
+      request.on('close', () => unsubscribe());
       return;
     }
 
@@ -405,7 +443,9 @@ const server = createServer(async (request, response) => {
       tasks.unshift(task);
 
       await saveTasks(tasks);
-      emit('task', task);
+      // Seed status cache and emit typed task_created event
+      taskStatusCache.set(task.id, task.status);
+      bridge.onTaskCreated(task);
 
       queueMicrotask(() => orchestrator.runTask(task.id));
 
@@ -452,6 +492,44 @@ const server = createServer(async (request, response) => {
       );
 
       return json(response, 202, { ok: true });
+    }
+
+    // GET /api/tasks/:id/snapshot
+    // Returns a bounded, sanitized snapshot of one task for UI reconnect.
+    // Intent: snapshot first -> event stream (from /events?lastSeq=N) -> continue.
+    const snapshotMatch = url.pathname.match(
+      /^\/api\/tasks\/([^/]+)\/snapshot$/
+    );
+
+    if (
+      request.method === 'GET' &&
+      snapshotMatch
+    ) {
+      const allTasks = await getTasks();
+      const found = allTasks.find(t => t.id === snapshotMatch[1]);
+
+      if (!found) {
+        return json(response, 404, { error: 'Task not found.' });
+      }
+
+      return json(response, 200, {
+        task: sanitizeTaskSnapshot(found),
+        currentSeq: eventEmitter.getLatestSeq(),
+        source: 'sqlite'
+      });
+    }
+
+    // GET /api/events/status
+    // Returns event stream metadata (current seq, buffer size, client count).
+    if (
+      request.method === 'GET' &&
+      url.pathname === '/api/events/status'
+    ) {
+      return json(response, 200, {
+        currentSeq: eventEmitter.getLatestSeq(),
+        clientCount: eventEmitter.clientCount(),
+        ...eventEmitter.getBufferStats()
+      });
     }
 
     return json(response, 404, {

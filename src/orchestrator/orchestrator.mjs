@@ -46,6 +46,8 @@ export function createOrchestrator({
         taskId: task.id
       });
     }
+    // NOTE: checkpoint_created events are emitted in updateTask() ONLY AFTER
+    // the SQLite transaction commits successfully — never from checkpoint() directly.
   }
 
   async function updateTask(task, mutator) {
@@ -71,6 +73,7 @@ export function createOrchestrator({
       : [];
 
     if (store?.recordTaskTransition) {
+      // Throws on rollback — events must NOT be emitted if this throws.
       store.recordTaskTransition({
         task: tasks[index],
         previousStatus,
@@ -101,7 +104,16 @@ export function createOrchestrator({
     }
 
     await saveTasks(tasks);
+
+    // Durable-state-before-event: emit ONLY after the persistence path above has
+    // succeeded (no exception thrown). A rollback in recordTaskTransition would
+    // throw and prevent reaching these lines.
     emit('task', tasks[index]);
+
+    // Emit checkpoint_created for each checkpoint that was persisted in this transition.
+    for (const cp of newCheckpoints) {
+      emit?.('checkpoint', { taskId: tasks[index].id, checkpoint: cp });
+    }
   }
 
   async function performModelSwitch(current, targetModel, reason, checkpointEvent) {
@@ -126,6 +138,13 @@ export function createOrchestrator({
         item,
         checkpointEvent
       );
+    });
+
+    emit?.('model_switching', {
+      taskId: current.id,
+      previousModel,
+      targetModel,
+      reason
     });
 
     await updateTask(current, item => {
@@ -179,6 +198,12 @@ export function createOrchestrator({
       );
     });
 
+    emit?.('model_switched', {
+      taskId: current.id,
+      previousModel,
+      targetModel
+    });
+
     return true;
   }
 
@@ -187,6 +212,22 @@ export function createOrchestrator({
     const task = tasks.find(item => item.id === taskId);
 
     if (!task || task.status === 'running') return;
+
+    if (store?.recoverTask) {
+      const recovery = store.recoverTask(taskId);
+      if (!recovery.ok) {
+        emit?.('recovery_required', {
+          taskId,
+          reason: recovery.error || 'Task integrity check failed'
+        });
+        await updateTask(task, item => {
+          item.status = 'paused';
+          item.message = `Recovery required: ${recovery.error}`;
+          checkpoint(item, `Recovery required: ${recovery.error}`);
+        });
+        return;
+      }
+    }
 
     const config = await getConfig();
 
@@ -517,6 +558,8 @@ export function createOrchestrator({
           });
         }
 
+        emit?.('tool_started', { taskId, toolName });
+
         try {
           const broker =
             await toolBrokerFactory();
@@ -533,6 +576,12 @@ export function createOrchestrator({
               resultSummary: JSON.stringify(result).slice(0, 5000)
             });
           }
+
+          emit?.('tool_completed', {
+            taskId,
+            toolName,
+            detail: JSON.stringify(result).slice(0, 1200)
+          });
 
           messages.push({
             role: 'tool',
@@ -567,6 +616,12 @@ export function createOrchestrator({
               error: String(error.message).slice(0, 1000)
             });
           }
+
+          emit?.('tool_failed', {
+            taskId,
+            toolName,
+            error: String(error.message).slice(0, 1000)
+          });
 
           messages.push({
             role: 'tool',
