@@ -8,6 +8,7 @@ import {
   MAX_STRING_LENGTH,
   MAX_DETAIL_LENGTH
 } from '../src/orchestrator/handoff.mjs';
+import { validateHandoffPacket } from '../src/orchestrator/handoff-validation.mjs';
 
 function deepFreeze(obj) {
   if (obj === null || typeof obj !== 'object') return obj;
@@ -629,4 +630,231 @@ test('valid smaller bounds within [0, MAX] are respected', () => {
   assert.equal(zeroPacket.recentSteps.length, 0);
   assert.equal(zeroPacket.originalGoal, '');
   assert.equal(zeroPacket.resumeContext.lastMessage, '');
+});
+
+test('valid handoff packet passes validation', () => {
+  const task = {
+    id: 'task-val-valid',
+    goal: 'Validate handoff packet continuity',
+    status: 'running',
+    message: 'Testing validation pass',
+    activeModel: 'qwen3:4b',
+    steps: [
+      {
+        at: '2026-09-13T10:00:00.000Z',
+        kind: 'tool',
+        name: 'read_file',
+        detail: 'file read successfully'
+      }
+    ],
+    checkpoints: [
+      {
+        id: 'cp-1',
+        createdAt: '2026-09-13T10:00:10.000Z',
+        event: 'Run started',
+        status: 'running',
+        activeModel: 'qwen3:4b',
+        step: 0
+      }
+    ],
+    switches: [
+      {
+        at: '2026-09-13T09:59:00.000Z',
+        model: 'qwen3:4b',
+        reason: 'Initial model'
+      }
+    ]
+  };
+
+  const packet = createHandoffPacket(task);
+  const result = validateHandoffPacket(packet);
+
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.errors, []);
+  assert.equal(Array.isArray(result.warnings), true);
+});
+
+test('malformed packet fails validation', () => {
+  // Null or non-object packet
+  assert.equal(validateHandoffPacket(null).valid, false);
+  assert.equal(validateHandoffPacket(undefined).valid, false);
+  assert.equal(validateHandoffPacket('string').valid, false);
+  assert.equal(validateHandoffPacket(123).valid, false);
+
+  // Missing taskId
+  const missingTaskId = {
+    originalGoal: 'Test',
+    currentStatus: 'running',
+    currentStepNumber: 0,
+    recentSteps: [],
+    recentCheckpoints: [],
+    recentModelSwitches: [],
+    recentErrors: [],
+    resumeContext: {
+      canResume: true,
+      status: 'running',
+      stepNumber: 0
+    }
+  };
+  const res1 = validateHandoffPacket(missingTaskId);
+  assert.equal(res1.valid, false);
+  assert.ok(res1.errors.some(e => e.includes('taskId')));
+
+  // Invalid task status
+  const invalidStatus = {
+    taskId: 't1',
+    originalGoal: 'Test',
+    currentStatus: 'non_existent_status',
+    currentStepNumber: 0,
+    recentSteps: [],
+    recentCheckpoints: [],
+    recentModelSwitches: [],
+    recentErrors: [],
+    resumeContext: {
+      canResume: true,
+      status: 'running',
+      stepNumber: 0
+    }
+  };
+  const res2 = validateHandoffPacket(invalidStatus);
+  assert.equal(res2.valid, false);
+  assert.ok(res2.errors.some(e => e.includes('currentStatus')));
+
+  // Negative step number
+  const negativeStep = {
+    taskId: 't1',
+    originalGoal: 'Test',
+    currentStatus: 'running',
+    currentStepNumber: -1,
+    recentSteps: [],
+    recentCheckpoints: [],
+    recentModelSwitches: [],
+    recentErrors: [],
+    resumeContext: {
+      canResume: true,
+      status: 'running',
+      stepNumber: 0
+    }
+  };
+  const res3 = validateHandoffPacket(negativeStep);
+  assert.equal(res3.valid, false);
+  assert.ok(res3.errors.some(e => e.includes('currentStepNumber')));
+
+  // Missing resumeContext
+  const missingResumeContext = {
+    taskId: 't1',
+    originalGoal: 'Test',
+    currentStatus: 'running',
+    currentStepNumber: 0,
+    recentSteps: [],
+    recentCheckpoints: [],
+    recentModelSwitches: [],
+    recentErrors: []
+  };
+  const res4 = validateHandoffPacket(missingResumeContext);
+  assert.equal(res4.valid, false);
+  assert.ok(res4.errors.some(e => e.includes('resumeContext')));
+
+  // Incoherent terminal resumeContext (completed with canResume=true)
+  const incoherentResume = {
+    taskId: 't1',
+    originalGoal: 'Test',
+    currentStatus: 'completed',
+    currentStepNumber: 0,
+    recentSteps: [],
+    recentCheckpoints: [],
+    recentModelSwitches: [],
+    recentErrors: [],
+    resumeContext: {
+      canResume: true,
+      status: 'completed',
+      stepNumber: 0
+    }
+  };
+  const res5 = validateHandoffPacket(incoherentResume);
+  assert.equal(res5.valid, false);
+  assert.ok(res5.errors.some(e => e.includes('resumeContext.canResume')));
+});
+
+test('oversized collections fail validation', () => {
+  const basePacket = createHandoffPacket({
+    id: 'task-oversized-test',
+    goal: 'Test oversized collection rejection',
+    status: 'running'
+  });
+
+  // Oversized recentSteps
+  const oversizedSteps = {
+    ...basePacket,
+    recentSteps: new Array(MAX_RECENT_ITEMS + 1).fill({ kind: 'tool', name: 'tool' })
+  };
+  const resSteps = validateHandoffPacket(oversizedSteps);
+  assert.equal(resSteps.valid, false);
+  assert.ok(resSteps.errors.some(e => e.includes('recentSteps exceeds maximum')));
+
+  // Oversized recentCheckpoints
+  const oversizedCheckpoints = {
+    ...basePacket,
+    recentCheckpoints: new Array(MAX_RECENT_ITEMS + 2).fill({ id: 'cp', event: 'event' })
+  };
+  const resCp = validateHandoffPacket(oversizedCheckpoints);
+  assert.equal(resCp.valid, false);
+  assert.ok(resCp.errors.some(e => e.includes('recentCheckpoints exceeds maximum')));
+
+  // Oversized recentModelSwitches
+  const oversizedSwitches = {
+    ...basePacket,
+    recentModelSwitches: new Array(MAX_RECENT_ITEMS + 5).fill({ model: 'm', reason: 'r' })
+  };
+  const resSwitches = validateHandoffPacket(oversizedSwitches);
+  assert.equal(resSwitches.valid, false);
+  assert.ok(resSwitches.errors.some(e => e.includes('recentModelSwitches exceeds maximum')));
+
+  // Oversized recentErrors
+  const oversizedErrors = {
+    ...basePacket,
+    recentErrors: new Array(MAX_RECENT_ITEMS + 1).fill({ type: 'error', message: 'fail' })
+  };
+  const resErrors = validateHandoffPacket(oversizedErrors);
+  assert.equal(resErrors.valid, false);
+  assert.ok(resErrors.errors.some(e => e.includes('recentErrors exceeds maximum')));
+});
+
+test('validation does not mutate input', () => {
+  const packet = createHandoffPacket({
+    id: 'task-immutability-test',
+    goal: 'Verify validation immutability',
+    status: 'running',
+    message: 'Immutable verification',
+    activeModel: 'qwen3:4b',
+    steps: [
+      {
+        at: '2026-09-13T10:00:00.000Z',
+        kind: 'tool',
+        name: 'test_tool',
+        detail: 'all good'
+      }
+    ],
+    checkpoints: [
+      {
+        id: 'cp-imm',
+        event: 'Checkpoint',
+        step: 1
+      }
+    ],
+    switches: [
+      {
+        model: 'qwen3:4b',
+        reason: 'default'
+      }
+    ]
+  });
+
+  // Deeply freeze the packet and its nested objects
+  deepFreeze(packet);
+
+  assert.doesNotThrow(() => {
+    const result = validateHandoffPacket(packet);
+    assert.equal(result.valid, true);
+  });
 });

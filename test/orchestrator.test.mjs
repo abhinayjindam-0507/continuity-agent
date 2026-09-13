@@ -629,3 +629,403 @@ test('handoff packet contains expected bounded fields and no sensitive data', as
   assert.equal(hp.originalGoal, 'Verify handoff packet security on switch');
   assert.ok(hp.resumeContext);
 });
+
+// --- Local test helpers for model switching and handoff validation ---
+
+function createTestTask(id, goal = 'Test task') {
+  return {
+    id,
+    goal,
+    status: 'queued',
+    message: 'Waiting to start.',
+    activeModel: '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    steps: [],
+    checkpoints: [],
+    switches: []
+  };
+}
+
+function createTwoModelRouter(primaryModel, fallbackModel) {
+  const primary = {
+    provider: 'ollama',
+    modelId: primaryModel,
+    capabilities: ['text', 'tools'],
+    contextLimit: 32768,
+    privacyTier: 'local_only',
+    health: 'healthy',
+    routingClass: 'support_only',
+    automaticFallbackAllowed: true
+  };
+  const fallback = {
+    provider: 'ollama',
+    modelId: fallbackModel,
+    capabilities: ['text', 'tools'],
+    contextLimit: 32768,
+    privacyTier: 'local_only',
+    health: 'healthy',
+    routingClass: 'fallback',
+    automaticFallbackAllowed: true
+  };
+  return {
+    getEligibleModels: () => [primary, fallback],
+    select: () => primary
+  };
+}
+
+function createFallbackModelAdapter(failModel, replyContent = 'Done.', onCall) {
+  return async (_endpoint, model) => {
+    onCall?.(model);
+    if (model === failModel) {
+      const error = new Error(`${failModel} unavailable`);
+      error.type = 'unavailable';
+      throw error;
+    }
+    return {
+      message: {
+        content: replyContent,
+        tool_calls: []
+      }
+    };
+  };
+}
+
+function createTestOrchestrator({
+  tasks,
+  onSave,
+  preferredModel = '',
+  modelRouter,
+  modelAdapter,
+  validateHandoff
+}) {
+  return createOrchestrator({
+    getTasks: async () => tasks,
+    saveTasks: async nextTasks => {
+      tasks.splice(0, tasks.length, ...nextTasks);
+      onSave?.(nextTasks);
+    },
+    getConfig: async () => ({
+      provider: 'ollama',
+      endpoint: 'http://127.0.0.1:11434',
+      preferredModel,
+      fallbacks: [],
+      maxSteps: 1,
+      allowedCommands: [],
+      networkToolsEnabled: false,
+      allowWrites: false
+    }),
+    toolBrokerFactory: async () => ({
+      execute: async () => ({ ok: true })
+    }),
+    modelRouter,
+    modelAdapter,
+    toolSpec: [],
+    projectRoot: '/tmp/test-project',
+    emit: () => {},
+    ...(validateHandoff !== undefined ? { validateHandoff } : {})
+  });
+}
+
+test('successful model switch enters validating_handoff before running', async () => {
+  const tasks = [createTestTask('task-switch-lifecycle', 'Test switching lifecycle transitions')];
+  const statusHistory = [];
+
+  const orchestrator = createTestOrchestrator({
+    tasks,
+    onSave: nextTasks => statusHistory.push(nextTasks[0].status),
+    modelRouter: createTwoModelRouter('model-1', 'model-2'),
+    modelAdapter: createFallbackModelAdapter('model-1', 'Model 2 succeeded.')
+  });
+
+  await orchestrator.runTask('task-switch-lifecycle');
+
+  // Verify full status sequence during model switch:
+  // starts at running -> switching_model -> validating_handoff -> running -> completed
+  assert.equal(tasks[0].status, 'completed');
+  assert.equal(tasks[0].activeModel, 'model-2');
+
+  const switchIndex = statusHistory.indexOf('switching_model');
+  const validatingIndex = statusHistory.indexOf('validating_handoff');
+  const runningAfterValidatingIndex = statusHistory.indexOf('running', validatingIndex);
+
+  assert.ok(switchIndex >= 0, 'Must transition to switching_model');
+  assert.ok(validatingIndex > switchIndex, 'Must transition to validating_handoff after switching_model');
+  assert.ok(runningAfterValidatingIndex > validatingIndex, 'Must transition to running after validating_handoff');
+
+  // Verify checkpoints recorded during validating_handoff
+  const validatingCheckpoint = tasks[0].checkpoints.find(
+    cp => cp.status === 'validating_handoff'
+  );
+  assert.ok(validatingCheckpoint, 'Must record a checkpoint in validating_handoff status');
+  assert.equal(validatingCheckpoint.event, 'Validating handoff to model-2');
+
+  const validatedCheckpoint = tasks[0].checkpoints.find(
+    cp => cp.event === 'Handoff validated for model-2'
+  );
+  assert.ok(validatedCheckpoint, 'Must record a checkpoint when handoff is validated');
+  assert.equal(validatedCheckpoint.status, 'running');
+});
+
+test('failed validation pauses instead of resuming', async () => {
+  const tasks = [createTestTask('task-switch-fail', 'Test failed validation pauses execution')];
+  const attemptedModels = [];
+
+  const orchestrator = createTestOrchestrator({
+    tasks,
+    modelRouter: createTwoModelRouter('model-primary', 'model-fallback'),
+    modelAdapter: createFallbackModelAdapter('model-primary', 'Should not run if validation fails.', model => {
+      attemptedModels.push(model);
+    }),
+    validateHandoff: () => ({
+      valid: false,
+      errors: ['Simulated corrupted handoff packet'],
+      warnings: []
+    })
+  });
+
+  await orchestrator.runTask('task-switch-fail');
+
+  // Execution must NOT have resumed with model-fallback
+  assert.deepEqual(attemptedModels, ['model-primary']);
+
+  // Task must be in paused state
+  assert.equal(tasks[0].status, 'paused');
+  assert.ok(tasks[0].message.includes('Handoff validation failed for model-fallback'));
+  assert.ok(tasks[0].message.includes('Simulated corrupted handoff packet'));
+
+  // Validation failure recorded in steps
+  const errorStep = tasks[0].steps.find(s => s.kind === 'validation_error');
+  assert.ok(errorStep, 'Must record validation_error step');
+  assert.equal(errorStep.model, 'model-fallback');
+  assert.equal(errorStep.detail, 'Simulated corrupted handoff packet');
+
+  // Validation failure recorded in checkpoints
+  const failCheckpoint = tasks[0].checkpoints.find(
+    cp => cp.event === 'Handoff validation failed: model-fallback'
+  );
+  assert.ok(failCheckpoint, 'Must record failure checkpoint');
+  assert.equal(failCheckpoint.status, 'paused');
+});
+
+test('successful-reply model switch enters validating_handoff before completing', async () => {
+  const tasks = [createTestTask('task-reply-switch', 'Test successful reply model switch validation')];
+  const statusHistory = [];
+
+  const orchestrator = createTestOrchestrator({
+    tasks,
+    onSave: nextTasks => statusHistory.push(nextTasks[0].status),
+    preferredModel: 'model-reply-b',
+    modelAdapter: async () => {
+      tasks[0].activeModel = 'model-reply-a';
+      return {
+        message: {
+          content: 'Reply with model switch.',
+          tool_calls: []
+        }
+      };
+    }
+  });
+
+  await orchestrator.runTask('task-reply-switch');
+
+  // Should transition: running -> switching_model -> validating_handoff -> running -> completed
+  assert.equal(tasks[0].status, 'completed');
+  assert.equal(tasks[0].activeModel, 'model-reply-b');
+  assert.equal(tasks[0].switches.length, 1);
+
+  const switchRecord = tasks[0].switches[0];
+  assert.equal(switchRecord.model, 'model-reply-b');
+  assert.ok(switchRecord.handoffPacket, 'Must attach handoffPacket to switch record');
+
+  const switchIndex = statusHistory.indexOf('switching_model');
+  const validatingIndex = statusHistory.indexOf('validating_handoff');
+  const runningAfterValidatingIndex = statusHistory.indexOf('running', validatingIndex);
+
+  assert.ok(switchIndex >= 0, 'Must transition through switching_model');
+  assert.ok(validatingIndex > switchIndex, 'Must transition to validating_handoff after switching_model');
+  assert.ok(runningAfterValidatingIndex > validatingIndex, 'Must transition to running after validating_handoff');
+
+  const validatingCheckpoint = tasks[0].checkpoints.find(
+    cp => cp.status === 'validating_handoff'
+  );
+  assert.ok(validatingCheckpoint, 'Must record checkpoint in validating_handoff');
+
+  const validatedCheckpoint = tasks[0].checkpoints.find(
+    cp => cp.event === 'Handoff validated for model-reply-b'
+  );
+  assert.ok(validatedCheckpoint, 'Must record checkpoint when handoff is validated');
+});
+
+test('successful-reply model switch with failed validation pauses instead of completing', async () => {
+  const tasks = [createTestTask('task-reply-switch-fail', 'Test successful reply model switch validation failure')];
+
+  const orchestrator = createTestOrchestrator({
+    tasks,
+    preferredModel: 'model-reply-b',
+    modelAdapter: async () => {
+      tasks[0].activeModel = 'model-reply-a';
+      return {
+        message: {
+          content: 'This should not be processed if validation fails.',
+          tool_calls: []
+        }
+      };
+    },
+    validateHandoff: () => ({
+      valid: false,
+      errors: ['Simulated structural error on reply switch'],
+      warnings: []
+    })
+  });
+
+  await orchestrator.runTask('task-reply-switch-fail');
+
+  // Must pause and NOT complete
+  assert.equal(tasks[0].status, 'paused');
+  assert.ok(tasks[0].message.includes('Handoff validation failed for model-reply-b'));
+  assert.ok(tasks[0].message.includes('Simulated structural error on reply switch'));
+
+  const errorStep = tasks[0].steps.find(s => s.kind === 'validation_error');
+  assert.ok(errorStep, 'Must record validation_error step');
+  assert.equal(errorStep.model, 'model-reply-b');
+  assert.equal(errorStep.detail, 'Simulated structural error on reply switch');
+
+  const failCheckpoint = tasks[0].checkpoints.find(
+    cp => cp.event === 'Handoff validation failed: model-reply-b'
+  );
+  assert.ok(failCheckpoint, 'Must record failure checkpoint');
+  assert.equal(failCheckpoint.status, 'paused');
+});
+
+test('handoff packet captures previous active model, not target model', async () => {
+  const tasks = [createTestTask('task-prev-model', 'Test handoff packet captures previous model')];
+
+  const orchestrator = createTestOrchestrator({
+    tasks,
+    modelRouter: createTwoModelRouter('original-model', 'target-model'),
+    modelAdapter: createFallbackModelAdapter('original-model')
+  });
+
+  await orchestrator.runTask('task-prev-model');
+
+  const hp = tasks[0].switches[0].handoffPacket;
+  assert.ok(hp, 'Must have a handoff packet');
+  // The handoff packet must capture the model BEFORE the switch, not the target
+  assert.equal(hp.activeModel, 'original-model',
+    'Handoff packet must contain the previous active model, not the target');
+});
+
+test('activeModel remains unchanged during switching_model and validating_handoff', async () => {
+  const tasks = [createTestTask('task-deferred-model', 'Test activeModel is deferred until validation passes')];
+  const modelDuringSwitching = [];
+  const modelDuringValidating = [];
+
+  const orchestrator = createTestOrchestrator({
+    tasks,
+    onSave: nextTasks => {
+      if (nextTasks[0].status === 'switching_model') {
+        modelDuringSwitching.push(nextTasks[0].activeModel);
+      }
+      if (nextTasks[0].status === 'validating_handoff') {
+        modelDuringValidating.push(nextTasks[0].activeModel);
+      }
+    },
+    modelRouter: createTwoModelRouter('old-model', 'new-model'),
+    modelAdapter: createFallbackModelAdapter('old-model')
+  });
+
+  await orchestrator.runTask('task-deferred-model');
+
+  assert.equal(tasks[0].status, 'completed');
+  assert.equal(tasks[0].activeModel, 'new-model');
+
+  // During switching_model, activeModel must still be the OLD model
+  assert.ok(modelDuringSwitching.length > 0, 'Must observe switching_model state');
+  for (const m of modelDuringSwitching) {
+    assert.equal(m, 'old-model',
+      'activeModel must remain old-model during switching_model');
+  }
+
+  // During validating_handoff, activeModel must still be the OLD model
+  assert.ok(modelDuringValidating.length > 0, 'Must observe validating_handoff state');
+  for (const m of modelDuringValidating) {
+    assert.equal(m, 'old-model',
+      'activeModel must remain old-model during validating_handoff');
+  }
+});
+
+test('successful validation changes activeModel to target', async () => {
+  const tasks = [createTestTask('task-valid-switch', 'Test activeModel changes only after validation')];
+  const modelAtRunningAfterValidation = [];
+  let sawValidatingHandoff = false;
+
+  const orchestrator = createTestOrchestrator({
+    tasks,
+    onSave: nextTasks => {
+      if (nextTasks[0].status === 'validating_handoff') {
+        sawValidatingHandoff = true;
+      }
+      if (sawValidatingHandoff && nextTasks[0].status === 'running') {
+        modelAtRunningAfterValidation.push(nextTasks[0].activeModel);
+        sawValidatingHandoff = false;
+      }
+    },
+    modelRouter: createTwoModelRouter('before-model', 'after-model'),
+    modelAdapter: createFallbackModelAdapter('before-model')
+  });
+
+  await orchestrator.runTask('task-valid-switch');
+
+  assert.equal(tasks[0].status, 'completed');
+
+  // At the running transition after validation, activeModel must be the target
+  assert.ok(modelAtRunningAfterValidation.length > 0,
+    'Must observe running state after validating_handoff');
+  assert.equal(modelAtRunningAfterValidation[0], 'after-model',
+    'activeModel must be set to target model at the running transition after validation');
+});
+
+test('failed validation leaves activeModel unchanged', async () => {
+  const tasks = [createTestTask('task-fail-keeps-model', 'Test failed validation does not change activeModel')];
+
+  const orchestrator = createTestOrchestrator({
+    tasks,
+    modelRouter: createTwoModelRouter('keep-this-model', 'rejected-model'),
+    modelAdapter: createFallbackModelAdapter('keep-this-model', 'Should not reach here.'),
+    validateHandoff: () => ({
+      valid: false,
+      errors: ['Rejected by validator'],
+      warnings: []
+    })
+  });
+
+  await orchestrator.runTask('task-fail-keeps-model');
+
+  assert.equal(tasks[0].status, 'paused');
+  // activeModel must still be the ORIGINAL model, not the rejected target
+  assert.equal(tasks[0].activeModel, 'keep-this-model',
+    'Failed validation must NOT change activeModel to the target');
+});
+
+test('switching message records correct previous model', async () => {
+  const tasks = [createTestTask('task-switch-msg', 'Test switching message uses previous model')];
+  let switchingMessage = null;
+
+  const orchestrator = createTestOrchestrator({
+    tasks,
+    onSave: nextTasks => {
+      if (nextTasks[0].status === 'switching_model' && !switchingMessage) {
+        switchingMessage = nextTasks[0].message;
+      }
+    },
+    modelRouter: createTwoModelRouter('from-model', 'to-model'),
+    modelAdapter: createFallbackModelAdapter('from-model')
+  });
+
+  await orchestrator.runTask('task-switch-msg');
+
+  assert.ok(switchingMessage, 'Must capture switching_model message');
+  assert.equal(switchingMessage, 'Switching from from-model to to-model.',
+    'Switching message must reference the previous model, not the target');
+});

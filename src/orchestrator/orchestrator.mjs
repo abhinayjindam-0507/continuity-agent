@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { assertTransition } from '../task-state.mjs';
+import { assertTransition, transitionTask } from '../task-state.mjs';
 import { shouldFallbackProviderError } from '../router/fallback-policy.mjs';
 import {
   canRetry,
   nextRetryDelayMs
 } from '../router/retry-policy.mjs';
 import { createHandoffPacket } from './handoff.mjs';
+import { validateHandoffPacket } from './handoff-validation.mjs';
 
 export function createOrchestrator({
   getTasks,
@@ -16,7 +17,8 @@ export function createOrchestrator({
   modelRouter,
   toolSpec,
   projectRoot,
-  emit
+  emit,
+  validateHandoff = validateHandoffPacket
 }) {
   function checkpoint(task, event) {
     task.checkpoints.push({
@@ -49,6 +51,84 @@ export function createOrchestrator({
 
     await saveTasks(tasks);
     emit('task', tasks[index]);
+  }
+
+  async function performModelSwitch(current, targetModel, reason, checkpointEvent) {
+    const previousModel = current.activeModel || 'previous model';
+    let handoffPacket = null;
+
+    await updateTask(current, item => {
+      transitionTask(item, 'switching_model');
+      handoffPacket = createHandoffPacket(item);
+
+      item.switches.push({
+        at: new Date().toISOString(),
+        model: targetModel,
+        reason,
+        handoffPacket
+      });
+
+      item.message =
+        `Switching from ${previousModel} to ${targetModel}.`;
+
+      checkpoint(
+        item,
+        checkpointEvent
+      );
+    });
+
+    await updateTask(current, item => {
+      transitionTask(item, 'validating_handoff');
+      item.message =
+        `Validating handoff to ${targetModel}.`;
+
+      checkpoint(
+        item,
+        `Validating handoff to ${targetModel}`
+      );
+    });
+
+    const validation = validateHandoff(handoffPacket);
+
+    if (!validation || !validation.valid) {
+      const validationErrors = validation?.errors?.length
+        ? validation.errors.join('; ')
+        : 'Invalid handoff packet';
+
+      await updateTask(current, item => {
+        transitionTask(item, 'paused');
+        item.message =
+          `Handoff validation failed for ${targetModel}: ${validationErrors}`;
+
+        item.steps.push({
+          at: new Date().toISOString(),
+          kind: 'validation_error',
+          model: targetModel,
+          detail: validationErrors
+        });
+
+        checkpoint(
+          item,
+          `Handoff validation failed: ${targetModel}`
+        );
+      });
+
+      return false;
+    }
+
+    await updateTask(current, item => {
+      transitionTask(item, 'running');
+      item.activeModel = targetModel;
+      item.message =
+        `Handoff validated. Now working with ${targetModel}.`;
+
+      checkpoint(
+        item,
+        `Handoff validated for ${targetModel}`
+      );
+    });
+
+    return true;
   }
 
   async function runTask(taskId) {
@@ -173,27 +253,16 @@ export function createOrchestrator({
             );
 
             if (current.activeModel !== model) {
-              await updateTask(current, item => {
-                const handoffPacket = createHandoffPacket(item);
+              const switched = await performModelSwitch(
+                current,
+                model,
+                'Previous local model was unavailable or failed.',
+                `Switched to ${model}`
+              );
 
-                item.activeModel = model;
-
-                item.switches.push({
-                  at: new Date().toISOString(),
-                  model,
-                  reason:
-                    'Previous local model was unavailable or failed.',
-                  handoffPacket
-                });
-
-                item.message =
-                  `Now working with ${model}.`;
-
-                checkpoint(
-                  item,
-                  `Switched to ${model}`
-                );
-              });
+              if (!switched) {
+                return;
+              }
             }
           } catch (error) {
             await updateTask(current, item => {
@@ -264,27 +333,16 @@ export function createOrchestrator({
             const nextModel =
               uniqueModels[modelIndex];
 
-            await updateTask(current, item => {
-                const handoffPacket = createHandoffPacket(item);
+            const switched = await performModelSwitch(
+              current,
+              nextModel,
+              `Fallback after ${model} failed: ${error.message}`,
+              `Fallback to ${nextModel}`
+            );
 
-                item.activeModel = nextModel;
-
-                item.switches.push({
-                  at: new Date().toISOString(),
-                  model: nextModel,
-                  reason:
-                    `Fallback after ${model} failed: ${error.message}`,
-                  handoffPacket
-                });
-
-                item.message =
-                  `Switching from ${model} to ${nextModel}.`;
-
-                checkpoint(
-                  item,
-                  `Fallback to ${nextModel}`
-                );
-              });
+            if (!switched) {
+              return;
+            }
 
             break;
           }

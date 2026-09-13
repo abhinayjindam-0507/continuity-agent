@@ -17,6 +17,17 @@ export function assertTransition(previous, next) {
   throw new Error(`Invalid task transition: ${previous} → ${next}`);
 }
 
+export function transition(previous, next) {
+  assertTransition(previous, next);
+  return next;
+}
+
+export function transitionTask(task, next) {
+  assertTransition(task.status, next);
+  task.status = next;
+  return task;
+}
+
 export function isTerminal(status) {
   return status === 'completed' || status === 'failed';
 }
