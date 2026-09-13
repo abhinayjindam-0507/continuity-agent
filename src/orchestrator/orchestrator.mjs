@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { assertTransition } from '../task-state.mjs';
 import { shouldFallbackProviderError } from '../router/fallback-policy.mjs';
+import {
+  canRetry,
+  nextRetryDelayMs
+} from '../router/retry-policy.mjs';
 
 export function createOrchestrator({
   getTasks,
@@ -32,11 +36,16 @@ export function createOrchestrator({
     if (index < 0) return;
 
     const previousStatus = tasks[index].status;
+
     mutator(tasks[index]);
 
-    assertTransition(previousStatus, tasks[index].status);
+    assertTransition(
+      previousStatus,
+      tasks[index].status
+    );
 
     tasks[index].updatedAt = new Date().toISOString();
+
     await saveTasks(tasks);
     emit('task', tasks[index]);
   }
@@ -70,7 +79,10 @@ export function createOrchestrator({
       ...fallbackModels.map(model => model.modelId),
       ...(selectedModel
         ? []
-        : [config.preferredModel, ...config.fallbacks])
+        : [
+            config.preferredModel,
+            ...config.fallbacks
+          ])
     ].filter(Boolean);
 
     const uniqueModels = [...new Set(models)];
@@ -78,20 +90,34 @@ export function createOrchestrator({
     if (!uniqueModels.length) {
       await updateTask(task, item => {
         item.status = 'needs_setup';
-        item.message = 'No eligible local Ollama model is available.';
-        checkpoint(item, 'No eligible local model configured');
+        item.message =
+          'No eligible local Ollama model is available.';
+        checkpoint(
+          item,
+          'No eligible local model configured'
+        );
       });
+
       return;
     }
 
     await updateTask(task, item => {
       item.status = 'running';
-      item.message = 'Preparing a local-only agent run.';
+      item.message =
+        'Preparing a local-only agent run.';
       item.activeModel = uniqueModels[0];
-      checkpoint(item, 'Run started');
+
+      checkpoint(
+        item,
+        'Run started'
+      );
     });
 
-    const active = (await getTasks()).find(item => item.id === taskId);
+    const active = (await getTasks()).find(
+      item => item.id === taskId
+    );
+
+    if (!active) return;
 
     const messages = [
       {
@@ -112,90 +138,165 @@ export function createOrchestrator({
 
     let modelIndex = 0;
 
-    for (let step = 0; step < config.maxSteps; step += 1) {
+    for (
+      let step = 0;
+      step < config.maxSteps;
+      step += 1
+    ) {
       const current = (await getTasks()).find(
         item => item.id === taskId
       );
 
-      if (!current || current.status !== 'running') return;
+      if (!current || current.status !== 'running') {
+        return;
+      }
 
-      let reply;
+      let reply = null;
 
-      while (!reply && modelIndex < uniqueModels.length) {
+      while (
+        !reply &&
+        modelIndex < uniqueModels.length
+      ) {
         const model = uniqueModels[modelIndex];
 
-        try {
-          reply = await modelAdapter(
-            config.endpoint,
-            model,
-            messages,
-            toolSpec
-          );
+        const maxRetries = 2;
+        let retryAttempt = 0;
 
-          if (current.activeModel !== model) {
+        while (!reply) {
+          try {
+            reply = await modelAdapter(
+              config.endpoint,
+              model,
+              messages,
+              toolSpec
+            );
+
+            if (current.activeModel !== model) {
+              await updateTask(current, item => {
+                item.activeModel = model;
+
+                item.switches.push({
+                  at: new Date().toISOString(),
+                  model,
+                  reason:
+                    'Previous local model was unavailable or failed.'
+                });
+
+                item.message =
+                  `Now working with ${model}.`;
+
+                checkpoint(
+                  item,
+                  `Switched to ${model}`
+                );
+              });
+            }
+          } catch (error) {
             await updateTask(current, item => {
-              item.activeModel = model;
+              item.steps.push({
+                at: new Date().toISOString(),
+                kind: 'model_error',
+                model,
+                detail: String(error.message),
+                errorType: error.type || 'unknown',
+                retryAttempt
+              });
+            });
+
+            if (
+              canRetry(
+                error,
+                retryAttempt,
+                maxRetries
+              )
+            ) {
+              const delayMs = nextRetryDelayMs(
+                retryAttempt,
+                100,
+                5_000
+              );
+
+              await updateTask(current, item => {
+                item.message =
+                  `Retrying ${model} after a transient provider error.`;
+
+                checkpoint(
+                  item,
+                  `Retry ${retryAttempt + 1} for ${model}`
+                );
+              });
+
+              await new Promise(resolve => {
+                setTimeout(resolve, delayMs);
+              });
+
+              retryAttempt += 1;
+              continue;
+            }
+
+            const canFallback =
+              shouldFallbackProviderError(error) &&
+              modelIndex + 1 <
+                uniqueModels.length;
+
+            if (!canFallback) {
+              await updateTask(current, item => {
+                item.status = 'paused';
+
+                item.message =
+                  `Model ${model} failed and no safe fallback is available. Progress is checkpointed.`;
+
+                checkpoint(
+                  item,
+                  `Model failure: ${model}`
+                );
+              });
+
+              return;
+            }
+
+            modelIndex += 1;
+
+            const nextModel =
+              uniqueModels[modelIndex];
+
+            await updateTask(current, item => {
+              item.activeModel = nextModel;
+
               item.switches.push({
                 at: new Date().toISOString(),
-                model,
+                model: nextModel,
                 reason:
-                  'Previous local model was unavailable or failed.'
+                  `Fallback after ${model} failed: ${error.message}`
               });
-              item.message = `Now working with ${model}.`;
-              checkpoint(item, `Switched to ${model}`);
-            });
-          }
-        } catch (error) {
-          await updateTask(current, item => {
-            item.steps.push({
-              at: new Date().toISOString(),
-              kind: 'model_error',
-              model,
-              detail: String(error.message)
-            });
-          });
 
-          const canFallback =
-            shouldFallbackProviderError(error) &&
-            modelIndex + 1 < uniqueModels.length;
-
-          if (!canFallback) {
-            await updateTask(current, item => {
-              item.status = 'paused';
               item.message =
-                `Model ${model} failed and no safe fallback is available. Progress is checkpointed.`;
-              checkpoint(item, `Model failure: ${model}`);
+                `Switching from ${model} to ${nextModel}.`;
+
+              checkpoint(
+                item,
+                `Fallback to ${nextModel}`
+              );
             });
 
-            return;
+            break;
           }
-
-          modelIndex += 1;
-
-          const nextModel = uniqueModels[modelIndex];
-
-          await updateTask(current, item => {
-            item.activeModel = nextModel;
-            item.switches.push({
-              at: new Date().toISOString(),
-              model: nextModel,
-              reason:
-                `Fallback after ${model} failed: ${error.message}`
-            });
-            item.message =
-              `Switching from ${model} to ${nextModel}.`;
-            checkpoint(item, `Fallback to ${nextModel}`);
-          });
         }
       }
 
       if (!reply) {
         await updateTask(current, item => {
           item.status = 'paused';
+
           item.message =
             'No safe local fallback is available. Progress is checkpointed.';
-          checkpoint(item, 'All safe local fallbacks exhausted');
+
+          checkpoint(
+            item,
+            'All safe local fallbacks exhausted'
+          );
         });
+
         return;
       }
 
@@ -213,17 +314,24 @@ export function createOrchestrator({
       if (!calls.length) {
         await updateTask(current, item => {
           item.status = 'completed';
+
           item.message =
             message.content ||
             'The local model completed its run.';
+
           item.steps.push({
             at: new Date().toISOString(),
             kind: 'assistant',
             model: item.activeModel,
             detail: message.content || ''
           });
-          checkpoint(item, 'Run completed');
+
+          checkpoint(
+            item,
+            'Run completed'
+          );
         });
+
         return;
       }
 
@@ -234,7 +342,9 @@ export function createOrchestrator({
 
       for (const call of calls) {
         try {
-          const broker = await toolBrokerFactory();
+          const broker =
+            await toolBrokerFactory();
+
           const result = await broker.execute(
             call.function || call
           );
@@ -249,8 +359,13 @@ export function createOrchestrator({
             item.steps.push({
               at: new Date().toISOString(),
               kind: 'tool',
-              name: (call.function || call).name,
-              detail: JSON.stringify(result).slice(0, 1200)
+              name:
+                (call.function || call).name,
+              detail:
+                JSON.stringify(result).slice(
+                  0,
+                  1200
+                )
             });
 
             checkpoint(
@@ -271,8 +386,10 @@ export function createOrchestrator({
             item.steps.push({
               at: new Date().toISOString(),
               kind: 'tool_error',
-              name: (call.function || call).name,
-              detail: String(error.message)
+              name:
+                (call.function || call).name,
+              detail:
+                String(error.message)
             });
 
             checkpoint(
@@ -291,9 +408,14 @@ export function createOrchestrator({
     if (latest) {
       await updateTask(latest, item => {
         item.status = 'paused';
+
         item.message =
           'Step limit reached. The project state is checkpointed; continue when ready.';
-        checkpoint(item, 'Step limit reached');
+
+        checkpoint(
+          item,
+          'Step limit reached'
+        );
       });
     }
   }

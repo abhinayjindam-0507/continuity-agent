@@ -292,3 +292,90 @@ test('orchestrator falls back when the selected model is unavailable', async () 
   assert.equal(tasks[0].activeModel, 'fallback-model');
   assert.equal(tasks[0].switches.length, 1);
 });
+test('orchestrator retries a transient provider error before fallback', async () => {
+  const tasks = [
+    {
+      id: 'task-retry-1',
+      goal: 'Retry the transient failure',
+      status: 'queued',
+      message: 'Waiting to start.',
+      activeModel: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    }
+  ];
+
+  let attempts = 0;
+
+  const orchestrator = createOrchestrator({
+    getTasks: async () => tasks,
+
+    saveTasks: async nextTasks => {
+      tasks.splice(0, tasks.length, ...nextTasks);
+    },
+
+    getConfig: async () => ({
+      provider: 'ollama',
+      endpoint: 'http://127.0.0.1:11434',
+      preferredModel: '',
+      fallbacks: [],
+      maxSteps: 1,
+      allowedCommands: [],
+      networkToolsEnabled: false,
+      allowWrites: false
+    }),
+
+    toolBrokerFactory: async () => ({
+      execute: async () => ({ ok: true })
+    }),
+
+    modelRouter: {
+      getEligibleModels: () => [],
+      select: () => ({
+        provider: 'ollama',
+        modelId: 'primary-model',
+        version: 'primary-model',
+        capabilities: ['text', 'tools'],
+        contextLimit: 32768,
+        privacyTier: 'local_only',
+        health: 'healthy',
+        routingClass: 'support_only',
+        automaticFallbackAllowed: false
+      })
+    },
+
+    modelAdapter: async () => {
+      attempts += 1;
+
+      if (attempts === 1) {
+        const error = new Error('temporary failure');
+        error.type = 'transient';
+        error.retryable = true;
+        throw error;
+      }
+
+      return {
+        message: {
+          content: 'Succeeded after retry.',
+          tool_calls: []
+        }
+      };
+    },
+
+    toolSpec: [],
+    projectRoot: '/tmp/test-project',
+    emit: () => {}
+  });
+
+  await orchestrator.runTask('task-retry-1');
+
+  assert.equal(attempts, 2);
+  assert.equal(tasks[0].status, 'completed');
+  assert.equal(
+    tasks[0].activeModel,
+    'primary-model'
+  );
+});
