@@ -207,11 +207,56 @@ export function createOrchestrator({
     return true;
   }
 
+  const activeRuns = new Map();
+
+  async function pauseTask(taskId) {
+    const activeRun = activeRuns.get(taskId);
+    if (activeRun) {
+      activeRun.controller.abort();
+      if (activeRun.promise) {
+        try {
+          await activeRun.promise;
+        } catch {
+          // Handled inside runTask
+        }
+      }
+    }
+
+    const tasks = await getTasks();
+    const task = tasks.find(item => item.id === taskId);
+    if (!task) {
+      return { ok: false, error: 'Task not found.', statusCode: 404 };
+    }
+
+    if (task.status === 'paused') {
+      return { ok: true, status: 'paused', alreadyPaused: !activeRun };
+    }
+
+    if (task.status !== 'running' && task.status !== 'queued') {
+      return {
+        ok: false,
+        error: `Cannot pause task with status "${task.status}". Only active tasks may be paused.`,
+        statusCode: 400,
+        status: task.status
+      };
+    }
+
+    // Task was queued or not running in runTask yet
+    await updateTask(task, item => {
+      transitionTask(item, 'paused');
+      item.message = 'Task paused before run started.';
+      checkpoint(item, 'Task paused');
+    });
+
+    return { ok: true, status: 'paused' };
+  }
+
   async function runTask(taskId) {
     const tasks = await getTasks();
     const task = tasks.find(item => item.id === taskId);
 
     if (!task || task.status === 'running') return;
+    if (activeRuns.has(taskId)) return;
 
     if (store?.recoverTask) {
       const recovery = store.recoverTask(taskId);
@@ -274,17 +319,42 @@ export function createOrchestrator({
       return;
     }
 
-    await updateTask(task, item => {
-      item.status = 'running';
-      item.message =
-        'Preparing a local-only agent run.';
-      item.activeModel = uniqueModels[0];
+    const controller = new AbortController();
+    const signal = controller.signal;
+    let resolveRun;
+    const runPromise = new Promise(res => { resolveRun = res; });
+    activeRuns.set(taskId, { controller, promise: runPromise });
 
-      checkpoint(
-        item,
-        'Run started'
-      );
-    });
+    async function handleTaskPause(reason = 'Task execution paused by user request.') {
+      const currentTasks = await getTasks();
+      const current = currentTasks.find(item => item.id === taskId);
+      if (!current || current.status === 'paused') return;
+      if (current.status !== 'running' && current.status !== 'queued') return;
+
+      await updateTask(current, item => {
+        transitionTask(item, 'paused');
+        item.message = reason;
+        checkpoint(item, 'Task paused');
+      });
+    }
+
+    try {
+      if (signal.aborted) {
+        await handleTaskPause('Task paused before run started.');
+        return;
+      }
+
+      await updateTask(task, item => {
+        item.status = 'running';
+        item.message =
+          'Preparing a local-only agent run.';
+        item.activeModel = uniqueModels[0];
+
+        checkpoint(
+          item,
+          'Run started'
+        );
+      });
 
     const active = (await getTasks()).find(
       item => item.id === taskId
@@ -316,6 +386,11 @@ export function createOrchestrator({
       step < config.maxSteps;
       step += 1
     ) {
+      if (signal.aborted) {
+        await handleTaskPause();
+        return;
+      }
+
       const current = (await getTasks()).find(
         item => item.id === taskId
       );
@@ -330,19 +405,41 @@ export function createOrchestrator({
         !reply &&
         modelIndex < uniqueModels.length
       ) {
+        if (signal.aborted) {
+          await handleTaskPause();
+          return;
+        }
+
         const model = uniqueModels[modelIndex];
 
         const maxRetries = 2;
         let retryAttempt = 0;
 
         while (!reply) {
+          if (signal.aborted) {
+            await handleTaskPause();
+            return;
+          }
+
           try {
+            emit?.('step_started', {
+              taskId: current.id,
+              step,
+              activeModel: model
+            });
+
             reply = await modelAdapter(
               config.endpoint,
               model,
               messages,
-              toolSpec
+              toolSpec,
+              { signal }
             );
+
+            if (signal.aborted) {
+              await handleTaskPause();
+              return;
+            }
 
             if (current.activeModel !== model) {
               const switched = await performModelSwitch(
@@ -357,6 +454,11 @@ export function createOrchestrator({
               }
             }
           } catch (error) {
+            if (signal.aborted || error.name === 'AbortError') {
+              await handleTaskPause();
+              return;
+            }
+
             await updateTask(current, item => {
               item.steps.push({
                 at: new Date().toISOString(),
@@ -392,8 +494,18 @@ export function createOrchestrator({
               });
 
               await new Promise(resolve => {
-                setTimeout(resolve, delayMs);
+                if (signal.aborted) return resolve();
+                const timer = setTimeout(resolve, delayMs);
+                signal.addEventListener('abort', () => {
+                  clearTimeout(timer);
+                  resolve();
+                }, { once: true });
               });
+
+              if (signal.aborted) {
+                await handleTaskPause();
+                return;
+              }
 
               retryAttempt += 1;
               continue;
@@ -498,6 +610,11 @@ export function createOrchestrator({
       });
 
       for (const call of calls) {
+        if (signal.aborted) {
+          await handleTaskPause();
+          return;
+        }
+
         const toolFn = call.function || call;
         const toolName = toolFn.name;
         let toolArgs = toolFn.arguments;
@@ -546,6 +663,11 @@ export function createOrchestrator({
           }
         }
 
+        if (signal.aborted) {
+          await handleTaskPause();
+          return;
+        }
+
         let actionRecord = null;
         if (store?.recordToolAction) {
           actionRecord = store.recordToolAction({
@@ -565,8 +687,22 @@ export function createOrchestrator({
             await toolBrokerFactory();
 
           const result = await broker.execute(
-            call.function || call
+            call.function || call,
+            { signal }
           );
+
+          if (signal.aborted) {
+            if (store?.recordToolAction && actionRecord) {
+              store.recordToolAction({
+                ...actionRecord,
+                status: 'failure',
+                finishedAt: new Date().toISOString(),
+                error: 'Tool execution aborted'
+              });
+            }
+            await handleTaskPause();
+            return;
+          }
 
           if (store?.recordToolAction && actionRecord) {
             store.recordToolAction({
@@ -608,6 +744,19 @@ export function createOrchestrator({
             );
           });
         } catch (error) {
+          if (signal.aborted || error.name === 'AbortError') {
+            if (store?.recordToolAction && actionRecord) {
+              store.recordToolAction({
+                ...actionRecord,
+                status: 'failure',
+                finishedAt: new Date().toISOString(),
+                error: 'Tool execution aborted'
+              });
+            }
+            await handleTaskPause();
+            return;
+          }
+
           if (store?.recordToolAction && actionRecord) {
             store.recordToolAction({
               ...actionRecord,
@@ -654,7 +803,7 @@ export function createOrchestrator({
       item => item.id === taskId
     );
 
-    if (latest) {
+    if (latest && latest.status === 'running') {
       await updateTask(latest, item => {
         item.status = 'paused';
 
@@ -667,11 +816,16 @@ export function createOrchestrator({
         );
       });
     }
+  } finally {
+    activeRuns.delete(taskId);
+    if (resolveRun) resolveRun();
   }
+}
 
   return {
     checkpoint,
     updateTask,
-    runTask
+    runTask,
+    pauseTask
   };
 }

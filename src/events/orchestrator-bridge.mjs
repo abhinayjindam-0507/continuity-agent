@@ -85,6 +85,13 @@ export function createOrchestratorBridge(eventEmitter) {
     ee.emit(taskId, 'checkpoint_created', sanitizeCheckpointPayload(cp));
   }
 
+  function onStepStarted(taskId, step, activeModel) {
+    ee.emit(taskId, 'step_started', {
+      step: Number.isInteger(step) ? step : 0,
+      activeModel: String(activeModel || '').slice(0, 200)
+    });
+  }
+
   function onToolStarted(taskId, toolName) {
     ee.emit(taskId, 'tool_started', buildToolPayload(toolName, ''));
   }
@@ -148,6 +155,7 @@ export function createOrchestratorBridge(eventEmitter) {
     onTaskCreated,
     onTaskUpdated,
     onCheckpointCreated,
+    onStepStarted,
     onToolStarted,
     onToolCompleted,
     onToolFailed,

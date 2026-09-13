@@ -41,10 +41,16 @@ function classifyStatus(status) {
   };
 }
 
-export async function ollamaChat(endpoint, model, messages, tools) {
+export async function ollamaChat(endpoint, model, messages, tools, options = {}) {
   let response;
 
   try {
+    const signals = [AbortSignal.timeout(90_000)];
+    if (options?.signal) {
+      signals.push(options.signal);
+    }
+    const combinedSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+
     response = await fetch(`${endpoint}/api/chat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -55,9 +61,14 @@ export async function ollamaChat(endpoint, model, messages, tools) {
         stream: false,
         options: { temperature: 0.15 }
       }),
-      signal: AbortSignal.timeout(90_000)
+      signal: combinedSignal
     });
   } catch (error) {
+    if (options?.signal?.aborted || error.name === 'AbortError') {
+      const abortErr = new Error('Ollama request aborted');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
     throw new ProviderError(
       `Ollama request failed: ${error.message}`,
       {

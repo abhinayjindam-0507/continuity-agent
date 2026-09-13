@@ -20,6 +20,7 @@ export const EVENT_TYPES = Object.freeze([
   'task_updated',
   'task_state_changed',
   'checkpoint_created',
+  'step_started',
   'tool_started',
   'tool_completed',
   'tool_failed',
@@ -189,5 +190,12 @@ export function buildToolPayload(toolName, detail, extra = {}) {
     ...safeExtra,
     toolName: String(toolName || '').slice(0, 200),
     detail:   String(detail   || '').slice(0, MAX_PAYLOAD_DETAIL)
+  };
+}
+
+export function buildStepStartedPayload(step, activeModel) {
+  return {
+    step: Number.isInteger(step) ? step : 0,
+    activeModel: String(activeModel || '').slice(0, 200)
   };
 }

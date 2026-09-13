@@ -54,7 +54,13 @@ export function createToolBroker(projectRoot, config, brokerOptions = {}) {
     allowedCommands: config.allowedCommands || []
   });
 
-  async function execute(call) {
+  async function execute(call, options = {}) {
+    if (options?.signal?.aborted) {
+      const abortErr = new Error('Tool execution aborted');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
+
     const args = call.arguments || {};
 
     if (call.name === 'list_files') {
@@ -99,7 +105,7 @@ export function createToolBroker(projectRoot, config, brokerOptions = {}) {
       if (policy.decision !== 'allowed') {
         throw new Error(policy.reason || 'This tool action requires user approval.');
       }
-      return termBroker.execute(args.command, args.args);
+      return termBroker.execute(args.command, args.args, options);
     }
 
     throw new Error(`Unknown tool: ${call.name}`);

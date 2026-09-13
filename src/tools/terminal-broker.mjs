@@ -316,6 +316,34 @@ export function createTerminalBroker(opts = {}) {
         }
       }
 
+      // Explicit AbortSignal cancellation support
+      if (callOpts?.signal) {
+        if (callOpts.signal.aborted) {
+          try {
+            child.kill('SIGTERM');
+          } catch {}
+          cleanupTimer();
+          const abortErr = new Error('Command execution aborted');
+          abortErr.name = 'AbortError';
+          return rejectRun(abortErr);
+        }
+
+        const onAbort = () => {
+          try {
+            child.kill('SIGTERM');
+          } catch {}
+          cleanupTimer();
+          const abortErr = new Error('Command execution aborted');
+          abortErr.name = 'AbortError';
+          rejectRun(abortErr);
+        };
+
+        callOpts.signal.addEventListener('abort', onAbort, { once: true });
+        child.on('close', () => {
+          callOpts.signal.removeEventListener('abort', onAbort);
+        });
+      }
+
       // Bound output during execution:
       // Accumulate at most stdoutLimit characters.
       // Continue consuming and discarding subsequent chunks to drain the pipe so

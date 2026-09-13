@@ -19,7 +19,8 @@ import {
   validateEvent,
   buildStateChangedPayload,
   buildModelSwitchPayload,
-  buildToolPayload
+  buildToolPayload,
+  buildStepStartedPayload
 } from '../src/events/event-schema.mjs';
 import { createEventEmitter, MAX_BUFFER_SIZE } from '../src/events/event-emitter.mjs';
 import { createOrchestratorBridge } from '../src/events/orchestrator-bridge.mjs';
@@ -769,4 +770,815 @@ test('17. buildToolPayload extra fields cannot override protected toolName or de
   assert.equal(result.toolName, 'actual_tool', 'toolName must not be overridden by extra fields');
   assert.equal(result.detail, 'actual_detail', 'detail must not be overridden by extra fields');
   assert.equal(result.extraInfo, 'allowed_extra', 'non-colliding extra fields should be preserved');
+});
+
+// ── 13. Step observability and in-flight cancellation ──────────────────────────
+
+test('18. step_started is emitted immediately before each model invocation with safe bounded fields', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'step-started-'));
+  try {
+    const store = await openStore(dir);
+    const ee = createEventEmitter();
+    const bridge = createOrchestratorBridge(ee);
+    const emittedEvents = [];
+    ee.subscribe({
+      write: chunk => {
+        const match = chunk.match(/event: ([^\n]+)\ndata: (\{.*\})\n\n/);
+        if (match) emittedEvents.push({ type: match[1], data: JSON.parse(match[2]) });
+      }
+    });
+
+    function emit(type, payload) {
+      if (type === 'step_started' && payload?.taskId) {
+        bridge.onStepStarted(payload.taskId, payload.step, payload.activeModel);
+      } else if (type === 'task' && payload?.id) {
+        bridge.onTaskUpdated(payload);
+      }
+    }
+
+    const task = {
+      id: 'task-step-evt-1',
+      goal: 'Test step started event',
+      status: 'queued',
+      activeModel: '',
+      message: 'Queued',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    };
+    store.upsertTask(task);
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store.getTasks(),
+      saveTasks: async tasks => store.saveTasks(tasks),
+      getConfig: async () => ({
+        provider: 'ollama',
+        endpoint: 'http://127.0.0.1:11434',
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 1,
+        allowedCommands: ['npm'],
+        networkToolsEnabled: false,
+        allowWrites: false
+      }),
+      toolBrokerFactory: async () => ({ execute: async () => ({}) }),
+      modelAdapter: async () => ({
+        message: { content: 'Completed step' }
+      }),
+      toolSpec: [],
+      projectRoot: '/tmp',
+      emit,
+      store
+    });
+
+    await orchestrator.runTask('task-step-evt-1');
+
+    const stepEvents = emittedEvents.filter(e => e.type === 'step_started');
+    assert.equal(stepEvents.length, 1);
+    assert.equal(stepEvents[0].data.payload.step, 0);
+    assert.equal(stepEvents[0].data.payload.activeModel, 'qwen3:4b');
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('19. queued task event is persisted in durable task event history on creation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'task-created-evt-'));
+  try {
+    const store = await openStore(dir);
+    const task = {
+      id: 'task-dur-1',
+      goal: 'Durable queued transition test',
+      status: 'queued',
+      message: 'Waiting to start.',
+      activeModel: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    };
+
+    store.recordTaskTransition({
+      task,
+      previousStatus: 'draft',
+      nextStatus: 'queued',
+      reason: 'Task created'
+    });
+
+    const events = store.getTaskEvents('task-dur-1');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].previousStatus, 'draft');
+    assert.equal(events[0].nextStatus, 'queued');
+    assert.equal(events[0].reason, 'Task created');
+
+    // Rollback test: simulated failure during task creation transition
+    assert.throws(() => {
+      store.recordTaskTransition({
+        task: { ...task, id: 'task-dur-fail' },
+        previousStatus: 'draft',
+        nextStatus: 'queued',
+        reason: 'Task created',
+        _testSeam: 'after_event'
+      });
+    }, /Simulated failure at test seam/);
+
+    // Rollback verified: task and event were not committed
+    assert.equal(store.getTask('task-dur-fail'), null);
+    assert.equal(store.getTaskEvents('task-dur-fail').length, 0);
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('20. cancellation during model invocation halts execution and transitions task to paused', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cancel-model-'));
+  try {
+    const store = await openStore(dir);
+    const ee = createEventEmitter();
+    const bridge = createOrchestratorBridge(ee);
+    const emittedEvents = [];
+    ee.subscribe({
+      write: chunk => {
+        const match = chunk.match(/event: ([^\n]+)/);
+        if (match) emittedEvents.push(match[1]);
+      }
+    });
+
+    const taskStatusCache = new Map();
+    function emit(type, payload) {
+      if (type === 'task' && payload?.id) {
+        const prev = taskStatusCache.get(payload.id);
+        taskStatusCache.set(payload.id, payload.status);
+        bridge.onTaskUpdated(payload, prev);
+      } else if (type === 'checkpoint' && payload?.taskId && payload?.checkpoint) {
+        bridge.onCheckpointCreated(payload.taskId, payload.checkpoint);
+      }
+    }
+
+    const task = {
+      id: 'task-cancel-model-1',
+      goal: 'Cancel during model invocation',
+      status: 'queued',
+      activeModel: '',
+      message: 'Queued',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    };
+    store.upsertTask(task);
+
+    let modelStartedResolve;
+    const modelStarted = new Promise(r => { modelStartedResolve = r; });
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store.getTasks(),
+      saveTasks: async tasks => store.saveTasks(tasks),
+      getConfig: async () => ({
+        provider: 'ollama',
+        endpoint: 'http://127.0.0.1:11434',
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 3,
+        allowedCommands: ['npm'],
+        networkToolsEnabled: false,
+        allowWrites: false
+      }),
+      toolBrokerFactory: async () => ({ execute: async () => ({}) }),
+      modelAdapter: async (_endpoint, _model, _messages, _tools, opts) => {
+        modelStartedResolve();
+        await new Promise(resolve => {
+          opts.signal.addEventListener('abort', resolve, { once: true });
+        });
+        const err = new Error('Aborted by signal');
+        err.name = 'AbortError';
+        throw err;
+      },
+      toolSpec: [],
+      projectRoot: '/tmp',
+      emit,
+      store
+    });
+
+    const runPromise = orchestrator.runTask('task-cancel-model-1');
+    await modelStarted;
+
+    const pauseResult = await orchestrator.pauseTask('task-cancel-model-1');
+    assert.equal(pauseResult.ok, true);
+    assert.equal(pauseResult.status, 'paused');
+
+    await runPromise;
+
+    const updatedTask = store.getTask('task-cancel-model-1');
+    assert.equal(updatedTask.status, 'paused');
+    assert.ok(updatedTask.checkpoints.some(c => c.event === 'Task paused'));
+    assert.ok(emittedEvents.includes('task_paused'));
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('21. cancellation during tool execution halts run and records tool action failure', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cancel-tool-'));
+  try {
+    const store = await openStore(dir);
+    const ee = createEventEmitter();
+    const bridge = createOrchestratorBridge(ee);
+
+    function emit(type, payload) {
+      if (type === 'task' && payload?.id) {
+        bridge.onTaskUpdated(payload);
+      }
+    }
+
+    const task = {
+      id: 'task-cancel-tool-1',
+      goal: 'Cancel during tool execution',
+      status: 'queued',
+      activeModel: '',
+      message: 'Queued',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    };
+    store.upsertTask(task);
+
+    let toolStartedResolve;
+    const toolStarted = new Promise(r => { toolStartedResolve = r; });
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store.getTasks(),
+      saveTasks: async tasks => store.saveTasks(tasks),
+      getConfig: async () => ({
+        provider: 'ollama',
+        endpoint: 'http://127.0.0.1:11434',
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 3,
+        allowedCommands: ['npm'],
+        networkToolsEnabled: false,
+        allowWrites: false
+      }),
+      toolBrokerFactory: async () => ({
+        execute: async (call, opts) => {
+          toolStartedResolve();
+          await new Promise(resolve => {
+            opts.signal.addEventListener('abort', resolve, { once: true });
+          });
+          const err = new Error('Tool execution aborted');
+          err.name = 'AbortError';
+          throw err;
+        }
+      }),
+      modelAdapter: async () => ({
+        message: {
+          content: 'Running tool',
+          tool_calls: [{ id: 'c1', type: 'function', function: { name: 'list_files', arguments: '{}' } }]
+        }
+      }),
+      toolSpec: [{ type: 'function', function: { name: 'list_files', description: 'List files' } }],
+      projectRoot: '/tmp',
+      emit,
+      store
+    });
+
+    const runPromise = orchestrator.runTask('task-cancel-tool-1');
+    await toolStarted;
+
+    const pauseResult = await orchestrator.pauseTask('task-cancel-tool-1');
+    assert.equal(pauseResult.ok, true);
+    assert.equal(pauseResult.status, 'paused');
+
+    await runPromise;
+
+    const updatedTask = store.getTask('task-cancel-tool-1');
+    assert.equal(updatedTask.status, 'paused');
+    assert.ok(updatedTask.checkpoints.some(c => c.event === 'Task paused'));
+
+    // Verify tool action was recorded as failure / aborted
+    const action = store.database.prepare('SELECT status, error FROM tool_actions WHERE task_id = ?').get('task-cancel-tool-1');
+    assert.equal(action.status, 'failure');
+    assert.equal(action.error, 'Tool execution aborted');
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('22. cancellation during model invocation does not trigger model fallback', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cancel-no-fallback-'));
+  try {
+    const store = await openStore(dir);
+    const ee = createEventEmitter();
+    const bridge = createOrchestratorBridge(ee);
+    const emittedEvents = [];
+    ee.subscribe({
+      write: chunk => {
+        const match = chunk.match(/event: ([^\n]+)/);
+        if (match) emittedEvents.push(match[1]);
+      }
+    });
+
+    function emit(type, payload) {
+      if (type === 'model_switching') {
+        bridge.onModelSwitching(payload.taskId, payload.previousModel, payload.targetModel, payload.reason);
+      } else if (type === 'task' && payload?.id) {
+        bridge.onTaskUpdated(payload);
+      }
+    }
+
+    const task = {
+      id: 'task-no-fallback-1',
+      goal: 'Ensure cancel avoids fallback',
+      status: 'queued',
+      activeModel: '',
+      message: 'Queued',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    };
+    store.upsertTask(task);
+
+    const modelsAttempted = [];
+    let modelStartedResolve;
+    const modelStarted = new Promise(r => { modelStartedResolve = r; });
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store.getTasks(),
+      saveTasks: async tasks => store.saveTasks(tasks),
+      getConfig: async () => ({
+        provider: 'ollama',
+        endpoint: 'http://127.0.0.1:11434',
+        preferredModel: 'primary-model',
+        fallbacks: ['fallback-model'],
+        maxSteps: 3,
+        allowedCommands: [],
+        networkToolsEnabled: false,
+        allowWrites: false
+      }),
+      toolBrokerFactory: async () => ({ execute: async () => ({}) }),
+      modelAdapter: async (_endpoint, model, _messages, _tools, opts) => {
+        modelsAttempted.push(model);
+        modelStartedResolve();
+        await new Promise(resolve => {
+          opts.signal.addEventListener('abort', resolve, { once: true });
+        });
+        const err = new Error('Aborted by signal');
+        err.name = 'AbortError';
+        throw err;
+      },
+      toolSpec: [],
+      projectRoot: '/tmp',
+      emit,
+      store
+    });
+
+    const runPromise = orchestrator.runTask('task-no-fallback-1');
+    await modelStarted;
+
+    const pauseResult = await orchestrator.pauseTask('task-no-fallback-1');
+    assert.equal(pauseResult.ok, true);
+    assert.equal(pauseResult.status, 'paused');
+
+    await runPromise;
+
+    assert.deepEqual(modelsAttempted, ['primary-model'], 'Fallback model should never be attempted upon cancel');
+    assert.equal(emittedEvents.includes('model_switching'), false, 'model_switching should not be emitted');
+
+    const updatedTask = store.getTask('task-no-fallback-1');
+    assert.equal(updatedTask.status, 'paused');
+    assert.equal(updatedTask.activeModel, 'primary-model');
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('23. pause endpoint pauses active task and rejects invalid requests', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'pause-endpoint-'));
+  try {
+    const store = await openStore(dir);
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store.getTasks(),
+      saveTasks: async tasks => store.saveTasks(tasks),
+      getConfig: async () => ({ maxSteps: 1 }),
+      toolBrokerFactory: async () => ({ execute: async () => ({}) }),
+      modelAdapter: async () => ({ message: { content: 'ok' } }),
+      toolSpec: [],
+      projectRoot: '/tmp',
+      emit: () => {},
+      store
+    });
+
+    // 1. Task not found => 404
+    const res404 = await orchestrator.pauseTask('non-existent');
+    assert.equal(res404.ok, false);
+    assert.equal(res404.statusCode, 404);
+
+    // 2. Completed task => 400
+    const completedTask = {
+      id: 'task-completed-1',
+      goal: 'Done task',
+      status: 'completed',
+      message: 'Finished',
+      activeModel: 'm1',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: []
+    };
+    store.upsertTask(completedTask);
+    const resCompleted = await orchestrator.pauseTask('task-completed-1');
+    assert.equal(resCompleted.ok, false);
+    assert.equal(resCompleted.statusCode, 400);
+
+    // 3. Queued task => paused successfully
+    const queuedTask = {
+      id: 'task-queued-1',
+      goal: 'Queued task',
+      status: 'queued',
+      message: 'Waiting',
+      activeModel: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: []
+    };
+    store.upsertTask(queuedTask);
+    const resQueued = await orchestrator.pauseTask('task-queued-1');
+    assert.equal(resQueued.ok, true);
+    assert.equal(resQueued.status, 'paused');
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('24. repeated pause requests are safe and idempotent', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'repeated-pause-'));
+  try {
+    const store = await openStore(dir);
+    const task = {
+      id: 'task-rep-pause-1',
+      goal: 'Repeated pause test',
+      status: 'queued',
+      message: 'Queued',
+      activeModel: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: []
+    };
+    store.upsertTask(task);
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store.getTasks(),
+      saveTasks: async tasks => store.saveTasks(tasks),
+      getConfig: async () => ({}),
+      toolBrokerFactory: async () => ({ execute: async () => ({}) }),
+      modelAdapter: async () => ({}),
+      toolSpec: [],
+      projectRoot: '/tmp',
+      emit: () => {},
+      store
+    });
+
+    const res1 = await orchestrator.pauseTask('task-rep-pause-1');
+    assert.equal(res1.ok, true);
+    assert.equal(res1.status, 'paused');
+
+    const res2 = await orchestrator.pauseTask('task-rep-pause-1');
+    assert.equal(res2.ok, true);
+    assert.equal(res2.status, 'paused');
+    assert.equal(res2.alreadyPaused, true);
+
+    const res3 = await orchestrator.pauseTask('task-rep-pause-1');
+    assert.equal(res3.ok, true);
+    assert.equal(res3.status, 'paused');
+    assert.equal(res3.alreadyPaused, true);
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('25. persistence failure does not emit false cancellation-success events', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'pause-fail-'));
+  try {
+    const store = await openStore(dir);
+    const ee = createEventEmitter();
+    const bridge = createOrchestratorBridge(ee);
+    const emittedEvents = [];
+    ee.subscribe({
+      write: chunk => {
+        const match = chunk.match(/event: ([^\n]+)/);
+        if (match) emittedEvents.push(match[1]);
+      }
+    });
+
+    const taskStatusCache = new Map();
+    function emit(type, payload) {
+      if (type === 'task' && payload?.id) {
+        const prev = taskStatusCache.get(payload.id);
+        taskStatusCache.set(payload.id, payload.status);
+        bridge.onTaskUpdated(payload, prev);
+      } else if (type === 'checkpoint' && payload?.taskId && payload?.checkpoint) {
+        bridge.onCheckpointCreated(payload.taskId, payload.checkpoint);
+      }
+    }
+
+    const task = {
+      id: 'task-persist-fail-1',
+      goal: 'Persistence failure during pause',
+      status: 'queued',
+      activeModel: '',
+      message: 'Queued',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: []
+    };
+    store.upsertTask(task);
+
+    // Force persistence failure on transition to paused
+    const origRecordTaskTransition = store.recordTaskTransition;
+    store.recordTaskTransition = (args) => {
+      if (args.nextStatus === 'paused') {
+        throw new Error('Forced persistence failure for paused transition');
+      }
+      return origRecordTaskTransition(args);
+    };
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store.getTasks(),
+      saveTasks: async tasks => store.saveTasks(tasks),
+      getConfig: async () => ({}),
+      toolBrokerFactory: async () => ({ execute: async () => ({}) }),
+      modelAdapter: async () => ({}),
+      toolSpec: [],
+      projectRoot: '/tmp',
+      emit,
+      store
+    });
+
+    await assert.rejects(
+      async () => {
+        await orchestrator.pauseTask('task-persist-fail-1');
+      },
+      /Forced persistence failure for paused transition/
+    );
+
+    // Verify NO task_paused or false checkpoint_created events were emitted
+    assert.equal(emittedEvents.includes('task_paused'), false, 'task_paused must not be emitted on failure');
+    const pauseCpEvents = emittedEvents.filter(e => e === 'checkpoint_created');
+    assert.equal(pauseCpEvents.length, 0, 'No checkpoint should be emitted on failure');
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('26. no duplicate pause checkpoint or event under race conditions', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'pause-race-'));
+  try {
+    const store = await openStore(dir);
+    const ee = createEventEmitter();
+    const bridge = createOrchestratorBridge(ee);
+    const emittedEvents = [];
+    ee.subscribe({
+      write: chunk => {
+        const match = chunk.match(/event: ([^\n]+)/);
+        if (match) emittedEvents.push(match[1]);
+      }
+    });
+
+    const taskStatusCache = new Map();
+    function emit(type, payload) {
+      if (type === 'task' && payload?.id) {
+        const prev = taskStatusCache.get(payload.id);
+        taskStatusCache.set(payload.id, payload.status);
+        bridge.onTaskUpdated(payload, prev);
+      } else if (type === 'checkpoint' && payload?.taskId && payload?.checkpoint) {
+        bridge.onCheckpointCreated(payload.taskId, payload.checkpoint);
+      }
+    }
+
+    const task = {
+      id: 'task-race-1',
+      goal: 'Race condition pause test',
+      status: 'queued',
+      activeModel: '',
+      message: 'Queued',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    };
+    store.upsertTask(task);
+
+    let orchestratorRef;
+    let modelStartedResolve;
+    const modelStarted = new Promise(r => { modelStartedResolve = r; });
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store.getTasks(),
+      saveTasks: async tasks => store.saveTasks(tasks),
+      getConfig: async () => ({
+        provider: 'ollama',
+        endpoint: 'http://127.0.0.1:11434',
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 3,
+        allowedCommands: ['npm'],
+        networkToolsEnabled: false,
+        allowWrites: false
+      }),
+      toolBrokerFactory: async () => ({ execute: async () => ({}) }),
+      modelAdapter: async (_endpoint, _model, _messages, _tools, opts) => {
+        modelStartedResolve();
+        // Wait until signal is aborted
+        await new Promise(resolve => {
+          opts.signal.addEventListener('abort', resolve, { once: true });
+        });
+        const err = new Error('Aborted');
+        err.name = 'AbortError';
+        throw err;
+      },
+      toolSpec: [],
+      projectRoot: '/tmp',
+      emit,
+      store
+    });
+    orchestratorRef = orchestrator;
+
+    // Start task in background
+    const runTaskPromise = orchestrator.runTask('task-race-1');
+    await modelStarted;
+
+    // Concurrently trigger 3 pauseTask calls
+    const [p1, p2, p3] = await Promise.all([
+      orchestrator.pauseTask('task-race-1'),
+      orchestrator.pauseTask('task-race-1'),
+      orchestrator.pauseTask('task-race-1')
+    ]);
+
+    await runTaskPromise;
+
+    assert.equal(p1.ok, true);
+    assert.equal(p2.ok, true);
+    assert.equal(p3.ok, true);
+
+    // Verify task state
+    const updatedTask = store.getTask('task-race-1');
+    assert.equal(updatedTask.status, 'paused');
+
+    // Count pause checkpoints — exactly 1
+    const pauseCheckpoints = updatedTask.checkpoints.filter(c => c.event === 'Task paused');
+    assert.equal(pauseCheckpoints.length, 1, 'Exactly one Task paused checkpoint should exist');
+
+    // Count task_paused events — exactly 1
+    const taskPausedEvents = emittedEvents.filter(e => e === 'task_paused');
+    assert.equal(taskPausedEvents.length, 1, 'Exactly one task_paused event should be emitted');
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('27. pause racing with natural completion resolves to completed and does not claim paused', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'pause-completion-race-'));
+  try {
+    const store = await openStore(dir);
+    const ee = createEventEmitter();
+    const bridge = createOrchestratorBridge(ee);
+    const emittedEvents = [];
+    ee.subscribe({
+      write: chunk => {
+        const match = chunk.match(/event: ([^\n]+)/);
+        if (match) emittedEvents.push(match[1]);
+      }
+    });
+
+    const taskStatusCache = new Map();
+    function emit(type, payload) {
+      if (type === 'task' && payload?.id) {
+        const prev = taskStatusCache.get(payload.id);
+        taskStatusCache.set(payload.id, payload.status);
+        bridge.onTaskUpdated(payload, prev);
+      } else if (type === 'checkpoint' && payload?.taskId && payload?.checkpoint) {
+        bridge.onCheckpointCreated(payload.taskId, payload.checkpoint);
+      }
+    }
+
+    const task = {
+      id: 'task-nat-race-1',
+      goal: 'Natural completion race test',
+      status: 'queued',
+      activeModel: '',
+      message: 'Queued',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    };
+    store.upsertTask(task);
+
+    let completionPersistedResolve;
+    const completionPersisted = new Promise(r => { completionPersistedResolve = r; });
+
+    let allowRunToFinishResolve;
+    const allowRunToFinish = new Promise(r => { allowRunToFinishResolve = r; });
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store.getTasks(),
+      saveTasks: async tasks => {
+        await store.saveTasks(tasks);
+        const t = tasks.find(item => item.id === 'task-nat-race-1');
+        if (t && t.status === 'completed') {
+          // Natural completion is now durably persisted before activeRuns cleanup
+          completionPersistedResolve();
+          // Hold runTask inside saveTasks within the exact race window
+          await allowRunToFinish;
+        }
+      },
+      getConfig: async () => ({
+        provider: 'ollama',
+        endpoint: 'http://127.0.0.1:11434',
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 3,
+        allowedCommands: ['npm'],
+        networkToolsEnabled: false,
+        allowWrites: false
+      }),
+      toolBrokerFactory: async () => ({ execute: async () => ({}) }),
+      modelAdapter: async () => ({
+        message: { content: 'Task completed naturally without tools.' }
+      }),
+      toolSpec: [],
+      projectRoot: '/tmp',
+      emit,
+      store
+    });
+
+    // 1. Start a running task
+    const runTaskPromise = orchestrator.runTask('task-nat-race-1');
+
+    // 2. Force natural completion to persist before activeRuns cleanup
+    await completionPersisted;
+
+    // 3. Issue pause during that exact window
+    const pausePromise = orchestrator.pauseTask('task-nat-race-1');
+
+    // Release runTask to complete cleanup
+    allowRunToFinishResolve();
+
+    const pauseResult = await pausePromise;
+    await runTaskPromise;
+
+    // 4. Verify final durable status is "completed"
+    const finalTask = store.getTask('task-nat-race-1');
+    assert.equal(finalTask.status, 'completed');
+
+    // 5. Verify pause does not claim "paused"
+    assert.equal(pauseResult.ok, false);
+    assert.notEqual(pauseResult.status, 'paused');
+    assert.equal(pauseResult.statusCode, 400);
+
+    // 6. Verify no duplicate "Task paused" checkpoint or task_paused event
+    const pauseCheckpoints = finalTask.checkpoints.filter(c => c.event === 'Task paused');
+    assert.equal(pauseCheckpoints.length, 0, 'No Task paused checkpoint should exist');
+
+    const taskPausedEvents = emittedEvents.filter(e => e === 'task_paused');
+    assert.equal(taskPausedEvents.length, 0, 'No task_paused event should be emitted');
+
+    const taskCompletedEvents = emittedEvents.filter(e => e === 'task_completed');
+    assert.equal(taskCompletedEvents.length, 1, 'Exactly one task_completed event should be emitted');
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

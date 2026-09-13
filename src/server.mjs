@@ -167,6 +167,8 @@ function emit(type, payload) {
     eventEmitter.broadcastRaw(`event: task\ndata: ${JSON.stringify(payload)}\n\n`);
   } else if (type === 'checkpoint' && payload?.taskId && payload?.checkpoint) {
     bridge.onCheckpointCreated(payload.taskId, payload.checkpoint);
+  } else if (type === 'step_started' && payload?.taskId) {
+    bridge.onStepStarted(payload.taskId, payload.step, payload.activeModel);
   } else if (type === 'tool_started' && payload?.taskId && payload?.toolName) {
     bridge.onToolStarted(payload.taskId, payload.toolName);
   } else if (type === 'tool_completed' && payload?.taskId && payload?.toolName) {
@@ -442,6 +444,24 @@ const server = createServer(async (request, response) => {
       const tasks = await getTasks();
       tasks.unshift(task);
 
+      // Persist the initial queued transition in the durable task event history
+      if (store?.recordTaskTransition) {
+        store.recordTaskTransition({
+          task,
+          previousStatus: 'draft',
+          nextStatus: 'queued',
+          reason: 'Task created'
+        });
+      } else if (store?.recordTaskEvent) {
+        store.recordTaskEvent({
+          taskId: task.id,
+          previousStatus: 'draft',
+          nextStatus: 'queued',
+          timestamp: task.createdAt,
+          reason: 'Task created'
+        });
+      }
+
       await saveTasks(tasks);
       // Seed status cache and emit typed task_created event
       taskStatusCache.set(task.id, task.status);
@@ -450,6 +470,25 @@ const server = createServer(async (request, response) => {
       queueMicrotask(() => orchestrator.runTask(task.id));
 
       return json(response, 201, task);
+    }
+
+    const pauseMatch = url.pathname.match(
+      /^\/api\/tasks\/([^/]+)\/pause$/
+    );
+
+    if (
+      request.method === 'POST' &&
+      pauseMatch
+    ) {
+      const taskId = pauseMatch[1];
+      const result = await orchestrator.pauseTask(taskId);
+      if (!result.ok) {
+        return json(response, result.statusCode || 400, {
+          error: result.error || 'Could not pause task.'
+        });
+      }
+
+      return json(response, 200, { ok: true, status: result.status });
     }
 
     const match = url.pathname.match(
