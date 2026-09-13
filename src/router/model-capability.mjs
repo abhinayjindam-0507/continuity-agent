@@ -56,6 +56,7 @@ export function createModelCapability(input = {}) {
     routingClass: ROUTING_CLASSES.includes(input.routingClass)
       ? input.routingClass
       : 'support_only',
+    automaticFallbackAllowed: input.automaticFallbackAllowed === true,
     lastCheckedAt:
       typeof input.lastCheckedAt === 'string'
         ? input.lastCheckedAt
