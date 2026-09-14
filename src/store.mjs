@@ -189,10 +189,29 @@ export async function openStore(dataRoot) {
       error TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS file_change_evidence (
+      id TEXT PRIMARY KEY,
+      tool_action_id TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      evidence_version INTEGER NOT NULL,
+      before_state TEXT,
+      after_state TEXT,
+      before_hash TEXT,
+      after_hash TEXT,
+      captured_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_task_events_task_id ON task_events(task_id);
     CREATE INDEX IF NOT EXISTS idx_checkpoints_task_id ON checkpoints(task_id);
     CREATE INDEX IF NOT EXISTS idx_tool_actions_task_id ON tool_actions(task_id);
     CREATE INDEX IF NOT EXISTS idx_tool_actions_idempotency ON tool_actions(idempotency_key);
+    CREATE INDEX IF NOT EXISTS idx_file_change_evidence_task_id ON file_change_evidence(task_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_file_change_evidence_idempotency ON file_change_evidence(idempotency_key);
+    CREATE INDEX IF NOT EXISTS idx_file_change_evidence_action ON file_change_evidence(tool_action_id);
   `);
 
   // On reopening store, mark any pending or in_progress tool actions as needs_verification
@@ -577,6 +596,168 @@ export async function openStore(dataRoot) {
     return null;
   }
 
+  // ── Filesystem change evidence ──────────────────────────────────────────────
+
+  /**
+   * Inserts one file-change evidence row. The idempotency key is UNIQUE and
+   * shared with the corresponding tool action, so replayed completions can
+   * never create conflicting duplicate evidence (existing row is kept).
+   */
+  function insertFileChangeEvidenceInternal(evidence) {
+    if (!evidence || typeof evidence !== 'object') {
+      throw new Error('File change evidence object is required.');
+    }
+
+    for (const field of ['toolActionId', 'idempotencyKey', 'taskId', 'toolName', 'operation', 'relativePath']) {
+      if (!evidence[field]) {
+        throw new Error(`File change evidence requires ${field}.`);
+      }
+    }
+    if (!Number.isInteger(evidence.evidenceVersion)) {
+      throw new Error('File change evidence requires an integer evidenceVersion.');
+    }
+
+    const beforeJson =
+      evidence.beforeState === undefined || evidence.beforeState === null
+        ? null
+        : JSON.stringify(evidence.beforeState);
+    const afterJson =
+      evidence.afterState === undefined || evidence.afterState === null
+        ? null
+        : JSON.stringify(evidence.afterState);
+
+    const toolActionId = String(evidence.toolActionId);
+    const idempotencyKey = String(evidence.idempotencyKey);
+    const taskId = String(evidence.taskId);
+    // Normalized exactly as persisted so identity comparison is stable.
+    const toolName = String(evidence.toolName).slice(0, 100);
+    const operation = String(evidence.operation).slice(0, 20);
+    const relativePath = String(evidence.relativePath).slice(0, 1000);
+
+    // Fail closed on idempotency-key reuse: an existing evidence row is only a
+    // legitimate replay when every identity field matches the incoming
+    // evidence. Any conflict throws (and rolls back the surrounding success
+    // transaction) instead of silently returning the existing row.
+    const existing = database.prepare(`
+      SELECT tool_action_id, task_id, tool_name, operation, relative_path
+      FROM file_change_evidence
+      WHERE idempotency_key = ?
+    `).get(idempotencyKey);
+
+    if (existing) {
+      const identityFields = [
+        ['toolActionId', existing.tool_action_id, toolActionId],
+        ['taskId', existing.task_id, taskId],
+        ['toolName', existing.tool_name, toolName],
+        ['operation', existing.operation, operation],
+        ['relativePath', existing.relative_path, relativePath]
+      ];
+
+      for (const [field, stored, incoming] of identityFields) {
+        if (stored !== incoming) {
+          throw new Error(
+            `File change evidence idempotency conflict: ${field} does not match the existing evidence for this tool action.`
+          );
+        }
+      }
+
+      return getToolActionEvidence(idempotencyKey);
+    }
+
+    database.prepare(`
+      INSERT INTO file_change_evidence (
+        id, tool_action_id, idempotency_key, task_id, tool_name, operation,
+        relative_path, evidence_version, before_state, after_state,
+        before_hash, after_hash, captured_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      String(evidence.id || randomUUID()),
+      toolActionId,
+      idempotencyKey,
+      taskId,
+      toolName,
+      operation,
+      relativePath,
+      evidence.evidenceVersion,
+      beforeJson,
+      afterJson,
+      evidence.beforeState?.hash ? String(evidence.beforeState.hash) : null,
+      evidence.afterState?.hash ? String(evidence.afterState.hash) : null,
+      String(evidence.capturedAt || new Date().toISOString())
+    );
+
+    return getToolActionEvidence(idempotencyKey);
+  }
+
+  function getToolActionEvidence(idOrKey) {
+    const row = database.prepare(`
+      SELECT id, tool_action_id AS toolActionId, idempotency_key AS idempotencyKey,
+             task_id AS taskId, tool_name AS toolName, operation,
+             relative_path AS relativePath, evidence_version AS evidenceVersion,
+             before_state AS beforeStateJson, after_state AS afterStateJson,
+             before_hash AS beforeHash, after_hash AS afterHash,
+             captured_at AS capturedAt
+      FROM file_change_evidence
+      WHERE tool_action_id = ? OR idempotency_key = ?
+      ORDER BY captured_at DESC, rowid DESC
+      LIMIT 1
+    `).get(String(idOrKey), String(idOrKey));
+
+    if (!row) return null;
+
+    try {
+      row.beforeState = row.beforeStateJson ? JSON.parse(row.beforeStateJson) : null;
+    } catch {
+      row.beforeState = null;
+    }
+    try {
+      row.afterState = row.afterStateJson ? JSON.parse(row.afterStateJson) : null;
+    } catch {
+      row.afterState = null;
+    }
+    delete row.beforeStateJson;
+    delete row.afterStateJson;
+    return row;
+  }
+
+  /**
+   * Marks a tool action successful and persists its filesystem change evidence
+   * in ONE transaction. Evidence can therefore never exist for a tool action
+   * that is not recorded as success, and an evidence persistence failure rolls
+   * the success transition back so the caller can park the action for
+   * verification instead of claiming an attested change.
+   */
+  function completeToolActionWithEvidence({ actionRecord, resultSummary = null, evidence = null }) {
+    if (!actionRecord || !actionRecord.idempotencyKey) {
+      throw new Error('Completing a tool action with evidence requires the pending action record.');
+    }
+
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      recordToolAction({
+        ...actionRecord,
+        status: 'success',
+        finishedAt: actionRecord.finishedAt || new Date().toISOString(),
+        resultSummary
+      });
+
+      let evidenceRecord = null;
+      if (evidence) {
+        evidenceRecord = insertFileChangeEvidenceInternal(evidence);
+      }
+
+      database.exec('COMMIT');
+
+      return {
+        action: getToolAction(actionRecord.idempotencyKey),
+        evidence: evidenceRecord
+      };
+    } catch (err) {
+      database.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
   function recoverTask(taskId) {
     const task = getTask(taskId);
     if (!task) return { ok: false, error: 'Task not found' };
@@ -635,6 +816,8 @@ export async function openStore(dataRoot) {
     recordToolAction,
     getToolAction,
     getCompletedToolAction,
+    completeToolActionWithEvidence,
+    getToolActionEvidence,
     recoverTask,
     getConfig,
     saveConfig,

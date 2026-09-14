@@ -8,6 +8,10 @@ import {
 import { createHandoffPacket } from './handoff.mjs';
 import { validateHandoffPacket } from './handoff-validation.mjs';
 import { computeCheckpointHash } from '../store.mjs';
+import {
+  buildChangeEvidence,
+  captureFileState
+} from '../tools/change-evidence.mjs';
 
 export function createOrchestrator({
   getTasks,
@@ -686,6 +690,22 @@ export function createOrchestrator({
           const broker =
             await toolBrokerFactory();
 
+          // Authentic before-state capture for filesystem mutations: the ACTUAL
+          // current file is read through the filesystem broker immediately
+          // before the mutation. A missing file is represented explicitly, and
+          // sensitive/blocked targets never yield content.
+          const evidenceFsBroker = broker?.filesystemBroker;
+          const canCaptureEvidence =
+            (toolName === 'write_file' || toolName === 'patch_file') &&
+            evidenceFsBroker &&
+            actionRecord &&
+            typeof toolArgs.path === 'string' &&
+            toolArgs.path.trim().length > 0;
+
+          const beforeState = canCaptureEvidence
+            ? await captureFileState(evidenceFsBroker, toolArgs.path)
+            : null;
+
           const result = await broker.execute(
             call.function || call,
             { signal }
@@ -704,7 +724,50 @@ export function createOrchestrator({
             return;
           }
 
-          if (store?.recordToolAction && actionRecord) {
+          // Success is recorded atomically together with the change evidence so
+          // evidence can never exist for a tool action that is not success, and
+          // an evidence persistence failure rolls the success claim back.
+          const evidencePathApplicable =
+            canCaptureEvidence && !!store?.completeToolActionWithEvidence;
+
+          if (evidencePathApplicable) {
+            try {
+              const afterState = await captureFileState(
+                evidenceFsBroker,
+                toolArgs.path
+              );
+
+              store.completeToolActionWithEvidence({
+                actionRecord,
+                resultSummary: JSON.stringify(result).slice(0, 5000),
+                evidence: buildChangeEvidence({
+                  toolActionId: actionRecord.id,
+                  idempotencyKey: actionRecord.idempotencyKey,
+                  taskId,
+                  toolName,
+                  relativePath: toolArgs.path,
+                  beforeState,
+                  afterState
+                })
+              });
+            } catch (evidenceError) {
+              // The filesystem change itself may have happened, but without
+              // durable evidence it must not be reported as an attested
+              // success. Park the action for verification instead. This branch
+              // deliberately does NOT fall through to the plain success
+              // recording below.
+              if (store?.recordToolAction) {
+                store.recordToolAction({
+                  ...actionRecord,
+                  status: 'needs_verification',
+                  finishedAt: new Date().toISOString(),
+                  error:
+                    'File change evidence could not be persisted: ' +
+                    String(evidenceError?.message || evidenceError).slice(0, 500)
+                });
+              }
+            }
+          } else if (store?.recordToolAction && actionRecord) {
             store.recordToolAction({
               ...actionRecord,
               status: 'success',
