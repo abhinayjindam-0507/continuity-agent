@@ -1105,6 +1105,135 @@ test('approval requests persist, bind exact arguments, and resolve only once', a
   }
 });
 
+test('approved approval requests consume exactly once and require exact binding', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-approval-consume-test-'));
+
+  try {
+    const store = await openStore(dir);
+
+    const expiresAt = new Date(
+      Date.now() + 5 * 60 * 1000
+    ).toISOString();
+
+    const args = {
+      path: 'src/example.js',
+      content: 'approved content'
+    };
+
+    store.createApprovalRequest({
+      id: 'approval-consume-1',
+      taskId: 'task-consume-1',
+      toolActionId: 'action-consume-1',
+      toolName: 'write_file',
+      args,
+      expiresAt
+    });
+
+    store.resolveApprovalRequest('approval-consume-1', {
+      status: 'approved',
+      resolvedAt: new Date().toISOString(),
+      resolutionReason: 'User approved exact proposed change.'
+    });
+
+    const consumed = store.consumeApprovalRequest('approval-consume-1', {
+      taskId: 'task-consume-1',
+      toolActionId: 'action-consume-1',
+      toolName: 'write_file',
+      args: {
+        content: 'approved content',
+        path: 'src/example.js'
+      }
+    });
+
+    assert.equal(consumed.status, 'consumed');
+    assert.equal(consumed.id, 'approval-consume-1');
+
+    // A consumed approval is single-use.
+    assert.throws(
+      () => store.consumeApprovalRequest('approval-consume-1', {
+        taskId: 'task-consume-1',
+        toolActionId: 'action-consume-1',
+        toolName: 'write_file',
+        args
+      }),
+      /not consumable with status "consumed"/
+    );
+
+    // A different task cannot consume the approval.
+    const taskMismatchDir = await mkdtemp(
+      join(tmpdir(), 'store-approval-consume-mismatch-')
+    );
+
+    try {
+      const mismatchStore = await openStore(taskMismatchDir);
+
+      mismatchStore.createApprovalRequest({
+        id: 'approval-consume-mismatch-1',
+        taskId: 'task-consume-2',
+        toolActionId: 'action-consume-2',
+        toolName: 'write_file',
+        args,
+        expiresAt
+      });
+
+      mismatchStore.resolveApprovalRequest(
+        'approval-consume-mismatch-1',
+        { status: 'approved' }
+      );
+
+      assert.throws(
+        () => mismatchStore.consumeApprovalRequest(
+          'approval-consume-mismatch-1',
+          {
+            taskId: 'different-task',
+            toolActionId: 'action-consume-2',
+            toolName: 'write_file',
+            args
+          }
+        ),
+        /task binding mismatch/
+      );
+
+      assert.throws(
+        () => mismatchStore.consumeApprovalRequest(
+          'approval-consume-mismatch-1',
+          {
+            taskId: 'task-consume-2',
+            toolActionId: 'action-consume-2',
+            toolName: 'write_file',
+            args: {
+              path: 'src/other.js',
+              content: 'approved content'
+            }
+          }
+        ),
+        /argument binding mismatch/
+      );
+
+      assert.equal(
+        mismatchStore.getApprovalRequest(
+          'approval-consume-mismatch-1'
+        ).status,
+        'approved'
+      );
+
+      mismatchStore.close();
+    } finally {
+      await rm(taskMismatchDir, {
+        recursive: true,
+        force: true
+      });
+    }
+
+    store.close();
+  } finally {
+    await rm(dir, {
+      recursive: true,
+      force: true
+    });
+  }
+});
+
 test('expired approval requests fail closed and cannot become approved', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'store-approval-expiry-test-'));
 
@@ -1203,6 +1332,385 @@ test('approval request rejects invalid resolution status and invalid expiry', as
     } finally {
       await rm(invalidDir, { recursive: true, force: true });
     }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('approval-required mutation creates a bound approval and never executes the broker', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-approval-orch-test-'));
+
+  try {
+    const store = await openStore(dir);
+
+    const task = {
+      id: 'task-approval-orch-1',
+      goal: 'Test approval-gated mutation',
+      status: 'queued',
+      message: 'Queued',
+      activeModel: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    };
+
+    store.upsertTask(task);
+
+    let brokerExecutions = 0;
+    const emitted = [];
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store.getTasks(),
+      saveTasks: async tasks => store.saveTasks(tasks),
+      getConfig: async () => ({
+        provider: 'ollama',
+        endpoint: 'http://127.0.0.1:11434',
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 2,
+        allowedCommands: [],
+        networkToolsEnabled: false,
+        allowWrites: true
+      }),
+      toolBrokerFactory: async () => ({
+        execute: async () => {
+          brokerExecutions++;
+          return { data: 'MUST NOT EXECUTE' };
+        }
+      }),
+      modelAdapter: async () => ({
+        message: {
+          content: 'I want to modify the file.',
+          tool_calls: [
+            {
+              id: 'approval-call-1',
+              type: 'function',
+              function: {
+                name: 'write_file',
+                arguments: {
+                  path: 'src/approved-example.js',
+                  content: 'approved content'
+                }
+              }
+            }
+          ]
+        }
+      }),
+      toolSpec: [],
+      projectRoot: dir,
+      emit: (type, payload) => {
+        emitted.push({ type, payload });
+      },
+      store
+    });
+
+    await orchestrator.runTask(task.id);
+
+    const updated = store.getTask(task.id);
+
+    assert.equal(updated.status, 'awaiting_approval');
+    assert.match(updated.message, /Approval required for write_file/);
+
+    assert.equal(brokerExecutions, 0);
+
+    const approval = store.getApprovalRequestByToolAction(
+      store.database
+        .prepare(`
+          SELECT id
+          FROM tool_actions
+          WHERE task_id = ?
+          ORDER BY started_at DESC, id DESC
+          LIMIT 1
+        `)
+        .get(task.id).id
+    );
+
+    assert.ok(approval);
+    assert.equal(approval.taskId, task.id);
+    assert.equal(approval.toolName, 'write_file');
+    assert.equal(approval.status, 'pending');
+    assert.equal(approval.args.path, 'src/approved-example.js');
+    assert.equal(approval.args.content, 'approved content');
+
+    const action = store.database
+      .prepare(`
+        SELECT tool_name, policy_decision, status
+        FROM tool_actions
+        WHERE task_id = ?
+        ORDER BY started_at DESC, id DESC
+        LIMIT 1
+      `)
+      .get(task.id);
+
+    assert.equal(action.tool_name, 'write_file');
+    assert.equal(action.policy_decision, 'requires_approval');
+    assert.equal(action.status, 'pending');
+
+    assert.ok(
+      emitted.some(event =>
+        event.type === 'approval_required' &&
+        event.payload?.taskId === task.id &&
+        event.payload?.approvalId === approval.id
+      )
+    );
+
+    assert.equal(
+      updated.steps.some(step => step.kind === 'approval_required'),
+      true
+    );
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('approval consumption fails at the database boundary when approval expires between validation and update', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-approval-expiry-race-test-'));
+
+  try {
+    const store = await openStore(dir);
+
+    const taskId = 'task-approval-expiry-race';
+    const toolActionId = 'action-approval-expiry-race';
+
+    const approval = store.createApprovalRequest({
+      id: 'approval-expiry-race-1',
+      taskId,
+      toolActionId,
+      toolName: 'write_file',
+      args: {
+        path: 'src/race.js',
+        content: 'race'
+      },
+      expiresAt: new Date(Date.now() + 60_000).toISOString()
+    });
+
+    store.resolveApprovalRequest(approval.id, {
+      status: 'approved'
+    });
+
+    const approved = store.getApprovalRequest(approval.id);
+    assert.equal(approved.status, 'approved');
+
+    store.database.prepare(`
+      UPDATE approval_requests
+      SET expires_at = ?
+      WHERE id = ?
+    `).run(
+      new Date(Date.now() - 1_000).toISOString(),
+      approval.id
+    );
+
+    assert.throws(
+      () =>
+        store.consumeApprovalRequest(approval.id, {
+          taskId,
+          toolActionId,
+          toolName: 'write_file',
+          args: {
+            path: 'src/race.js',
+            content: 'race'
+          }
+        }),
+      /expired|consumption failed|not consumable/i
+    );
+
+    const after = store.getApprovalRequest(approval.id);
+
+    assert.equal(after.status, 'approved');
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('approved approval execution must use the exact persisted tool action and consume only after durable success', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-approval-execution-test-'));
+
+  try {
+    const store = await openStore(dir);
+
+    const taskId = 'task-approval-execution-1';
+    const toolActionId = 'action-approval-execution-1';
+
+    const action = store.recordToolAction({
+      id: toolActionId,
+      taskId,
+      toolName: 'write_file',
+      args: {
+        path: 'src/exact-approved.js',
+        content: 'approved exact content'
+      },
+      policyDecision: 'requires_approval',
+      status: 'pending',
+      startedAt: new Date().toISOString()
+    });
+
+    const approval = store.createApprovalRequest({
+      id: 'approval-execution-1',
+      taskId,
+      toolActionId: action.id,
+      toolName: action.toolName,
+      args: action.args,
+      expiresAt: new Date(Date.now() + 60_000).toISOString()
+    });
+
+    store.resolveApprovalRequest(approval.id, {
+      status: 'approved'
+    });
+
+    const approved = store.getApprovalRequest(approval.id);
+
+    assert.equal(approved.status, 'approved');
+    assert.equal(approved.toolActionId, action.id);
+    assert.equal(approved.toolName, 'write_file');
+    assert.equal(approved.args.path, 'src/exact-approved.js');
+    assert.equal(approved.args.content, 'approved exact content');
+
+    const persistedAction = store.getToolAction(action.id);
+
+    assert.ok(persistedAction);
+    assert.equal(persistedAction.taskId, taskId);
+    assert.equal(persistedAction.toolName, 'write_file');
+    assert.equal(persistedAction.status, 'pending');
+    assert.equal(persistedAction.args.path, 'src/exact-approved.js');
+    assert.equal(
+      persistedAction.args.content,
+      'approved exact content'
+    );
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('approved mutation executes the persisted action once and replay never executes it twice', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-approval-execution-orch-test-'));
+
+  try {
+    const store = await openStore(dir);
+
+    const task = {
+      id: 'task-approval-execution-orch-1',
+      goal: 'Execute approved mutation',
+      status: 'awaiting_approval',
+      message: 'Approval required for write_file.',
+      activeModel: 'qwen3:4b',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    };
+
+    store.upsertTask(task);
+
+    const action = store.recordToolAction({
+      id: 'action-approval-execution-orch-1',
+      taskId: task.id,
+      toolName: 'write_file',
+      args: {
+        path: 'src/exact-approved.js',
+        content: 'approved exact content'
+      },
+      policyDecision: 'requires_approval',
+      status: 'pending',
+      startedAt: new Date().toISOString()
+    });
+
+    const approval = store.createApprovalRequest({
+      id: 'approval-execution-orch-1',
+      taskId: task.id,
+      toolActionId: action.id,
+      toolName: action.toolName,
+      args: action.args,
+      expiresAt: new Date(Date.now() + 60_000).toISOString()
+    });
+
+    store.resolveApprovalRequest(approval.id, {
+      status: 'approved'
+    });
+
+    let brokerExecutions = 0;
+    let receivedCall = null;
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store.getTasks(),
+      saveTasks: async tasks => store.saveTasks(tasks),
+      getConfig: async () => ({
+        provider: 'ollama',
+        endpoint: 'http://127.0.0.1:11434',
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 2,
+        allowedCommands: [],
+        networkToolsEnabled: false,
+        allowWrites: true
+      }),
+      toolBrokerFactory: async () => ({
+        execute: async call => {
+          brokerExecutions++;
+          receivedCall = call;
+
+          return {
+            ok: true,
+            path: call.function.arguments.path
+          };
+        }
+      }),
+      modelAdapter: async () => ({
+        message: {
+          content: 'No further model action.',
+          tool_calls: []
+        }
+      }),
+      toolSpec: [],
+      projectRoot: dir,
+      emit: () => {},
+      store
+    });
+
+    assert.equal(
+      typeof orchestrator.executeApprovedAction,
+      'function',
+      'orchestrator must expose executeApprovedAction for the approval workflow'
+    );
+
+    const first = await orchestrator.executeApprovedAction(approval.id);
+
+    assert.equal(first.ok, true);
+    assert.equal(brokerExecutions, 1);
+
+    assert.equal(receivedCall.function.name, 'write_file');
+    assert.equal(
+      receivedCall.function.arguments.path,
+      'src/exact-approved.js'
+    );
+    assert.equal(
+      receivedCall.function.arguments.content,
+      'approved exact content'
+    );
+
+    const completed = store.getToolAction(action.id);
+
+    assert.equal(completed.status, 'success');
+
+    const consumed = store.getApprovalRequest(approval.id);
+
+    assert.equal(consumed.status, 'consumed');
+
+    const second = await orchestrator.executeApprovedAction(approval.id);
+
+    assert.equal(second.ok, true);
+    assert.equal(second.replayed, true);
+    assert.equal(brokerExecutions, 1);
+
+    store.close();
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

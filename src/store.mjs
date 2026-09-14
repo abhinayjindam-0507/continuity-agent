@@ -257,7 +257,7 @@ export async function openStore(dataRoot) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_file_change_evidence_idempotency ON file_change_evidence(idempotency_key);
     CREATE INDEX IF NOT EXISTS idx_file_change_evidence_action ON file_change_evidence(tool_action_id);
     CREATE INDEX IF NOT EXISTS idx_approval_requests_task_id ON approval_requests(task_id);
-    CREATE INDEX IF NOT EXISTS idx_approval_requests_action ON approval_requests(tool_action_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_requests_action ON approval_requests(tool_action_id);
     CREATE INDEX IF NOT EXISTS idx_approval_requests_status_expiry ON approval_requests(status, expires_at);
   `);
 
@@ -643,6 +643,136 @@ export async function openStore(dataRoot) {
     return null;
   }
 
+  /**
+   * Atomically claims one exact persisted tool action for approved execution.
+   *
+   * Claiming changes only pending -> in_progress. The approval remains
+   * approved until physical execution has completed and durable success/evidence
+   * has been persisted.
+   */
+  function claimToolActionForApproval({
+    taskId,
+    toolActionId,
+    toolName,
+    args = {}
+  } = {}) {
+    if (!taskId || !toolActionId || !toolName) {
+      throw new Error(
+        'taskId, toolActionId and toolName are required to claim an approved tool action'
+      );
+    }
+
+    const normalizedTaskId = String(taskId);
+    const normalizedActionId = String(toolActionId);
+    const normalizedToolName = String(toolName).slice(0, 100);
+
+    const canonicalArgs = canonicalizeToolArgs(args);
+    const argumentsJson = JSON.stringify(canonicalArgs);
+    const argumentsHash = createHash('sha256')
+      .update(argumentsJson, 'utf8')
+      .digest('hex');
+
+    database.exec('BEGIN IMMEDIATE');
+
+    try {
+      const action = getToolAction(normalizedActionId);
+
+      if (!action) {
+        throw new Error('Tool action not found');
+      }
+
+      if (String(action.taskId) !== normalizedTaskId) {
+        throw new Error('Tool action task binding mismatch');
+      }
+
+      if (String(action.toolName) !== normalizedToolName) {
+        throw new Error('Tool action tool binding mismatch');
+      }
+
+      const persistedArgsJson = JSON.stringify(
+        canonicalizeToolArgs(action.args || {})
+      );
+
+      if (persistedArgsJson !== argumentsJson) {
+        throw new Error('Tool action argument binding mismatch');
+      }
+
+      if (action.status !== 'pending') {
+        throw new Error(
+          `Tool action is not claimable with status "${action.status}".`
+        );
+      }
+
+      const approval = getApprovalRequestByToolAction(normalizedActionId);
+
+      if (!approval) {
+        throw new Error('Approval request not found for tool action');
+      }
+
+      if (String(approval.taskId) !== normalizedTaskId) {
+        throw new Error('Approval request task binding mismatch');
+      }
+
+      if (String(approval.toolActionId) !== normalizedActionId) {
+        throw new Error('Approval request tool action binding mismatch');
+      }
+
+      if (String(approval.toolName) !== normalizedToolName) {
+        throw new Error('Approval request tool binding mismatch');
+      }
+
+      if (approval.argumentsHash !== argumentsHash) {
+        throw new Error('Approval request argument binding mismatch');
+      }
+
+      if (approval.status !== 'approved') {
+        throw new Error(
+          `Approval request is not executable with status "${approval.status}".`
+        );
+      }
+
+      const expiresAt = Date.parse(approval.expiresAt);
+
+      if (!Number.isFinite(expiresAt)) {
+        throw new Error('Approval request has an invalid expiration timestamp');
+      }
+
+      if (Date.now() >= expiresAt) {
+        throw new Error('Approval request expired before tool action claim');
+      }
+
+      const claimed = database.prepare(`
+        UPDATE tool_actions
+        SET status = 'in_progress',
+            started_at = ?
+        WHERE id = ?
+          AND task_id = ?
+          AND tool_name = ?
+          AND arguments = ?
+          AND status = 'pending'
+      `).run(
+        new Date().toISOString(),
+        normalizedActionId,
+        normalizedTaskId,
+        normalizedToolName,
+        argumentsJson
+      );
+
+      if (claimed.changes !== 1) {
+        throw new Error(
+          'Tool action claim failed or raced with another executor'
+        );
+      }
+
+      database.exec('COMMIT');
+
+      return getToolAction(normalizedActionId);
+    } catch (err) {
+      database.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
   function createApprovalRequest({
     id = randomUUID(),
     taskId,
@@ -768,6 +898,32 @@ export async function openStore(dataRoot) {
     return parseApprovalRow(row);
   }
 
+  function getApprovalRequestByToolAction(toolActionId) {
+    if (!toolActionId) return null;
+
+    const row = database.prepare(`
+      SELECT id,
+             task_id AS taskId,
+             tool_action_id AS toolActionId,
+             tool_name AS toolName,
+             arguments,
+             arguments_hash AS argumentsHash,
+             status,
+             created_at AS createdAt,
+             expires_at AS expiresAt,
+             resolved_at AS resolvedAt,
+             resolution_reason AS resolutionReason
+      FROM approval_requests
+      WHERE tool_action_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `).get(String(toolActionId));
+
+    if (!row) return null;
+
+    return parseApprovalRow(row);
+  }
+
   function resolveApprovalRequest(id, {
     status,
     resolvedAt = new Date().toISOString(),
@@ -835,6 +991,89 @@ export async function openStore(dataRoot) {
     }
 
     return resolved;
+  }
+
+  function consumeApprovalRequest(id, {
+    taskId,
+    toolActionId,
+    toolName,
+    args = {}
+  } = {}) {
+    if (!id || !taskId || !toolActionId || !toolName) {
+      throw new Error(
+        'id, taskId, toolActionId and toolName are required to consume approval'
+      );
+    }
+
+    const approval = getApprovalRequest(id);
+
+    if (!approval) {
+      throw new Error('Approval request not found');
+    }
+
+    if (String(approval.taskId) !== String(taskId)) {
+      throw new Error('Approval request task binding mismatch');
+    }
+
+    if (String(approval.toolActionId) !== String(toolActionId)) {
+      throw new Error('Approval request tool action binding mismatch');
+    }
+
+    if (String(approval.toolName) !== String(toolName)) {
+      throw new Error('Approval request tool binding mismatch');
+    }
+
+    const canonicalArgs = JSON.stringify(canonicalizeToolArgs(args));
+    const argumentsHash = createHash('sha256')
+      .update(canonicalArgs, 'utf8')
+      .digest('hex');
+
+    if (approval.argumentsHash !== argumentsHash) {
+      throw new Error('Approval request argument binding mismatch');
+    }
+
+    if (approval.status !== 'approved') {
+      throw new Error(
+        `Approval request is not consumable with status "${approval.status}".`
+      );
+    }
+
+    const expiresAt = Date.parse(approval.expiresAt);
+
+    if (!Number.isFinite(expiresAt)) {
+      throw new Error('Approval request has an invalid expiration timestamp');
+    }
+
+    if (Date.now() >= expiresAt) {
+      throw new Error('Approval request expired before consumption');
+    }
+
+    const resolved = database.prepare(`
+      UPDATE approval_requests
+      SET status = 'consumed'
+      WHERE id = ?
+        AND status = 'approved'
+        AND task_id = ?
+        AND tool_action_id = ?
+        AND tool_name = ?
+        AND arguments_hash = ?
+        AND expires_at > ?
+    `).run(
+      String(id),
+      String(taskId),
+      String(toolActionId),
+      String(toolName),
+      argumentsHash,
+      new Date().toISOString()
+    );
+
+    if (resolved.changes !== 1) {
+      throw new Error(
+        'Approval consumption failed or raced with another consumer'
+      );
+    }
+
+    return getApprovalRequest(id);
   }
 
   // ── Filesystem change evidence ──────────────────────────────────────────────
@@ -1110,9 +1349,12 @@ export async function openStore(dataRoot) {
     recordToolAction,
     getToolAction,
     getCompletedToolAction,
+    claimToolActionForApproval,
     createApprovalRequest,
     getApprovalRequest,
+    getApprovalRequestByToolAction,
     resolveApprovalRequest,
+    consumeApprovalRequest,
     completeToolActionWithEvidence,
     getToolActionEvidence,
     getFileChangeEvidence,

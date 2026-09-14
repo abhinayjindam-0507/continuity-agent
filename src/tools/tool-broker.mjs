@@ -89,7 +89,9 @@ export function createToolBroker(projectRoot, config, brokerOptions = {}) {
         throw new Error('write_file requires text content.');
       }
 
-      return fsBroker.writeFile(args.path, args.content);
+      return fsBroker.writeFile(args.path, args.content, {
+        authorizeWrite: options?.approvedMutationAuthorization
+      });
     }
 
     if (call.name === 'patch_file') {
@@ -97,7 +99,9 @@ export function createToolBroker(projectRoot, config, brokerOptions = {}) {
         targetContent: args.targetContent,
         replacementContent: args.replacementContent
       };
-      return fsBroker.patchFile(args.path, patchSpec);
+      return fsBroker.patchFile(args.path, patchSpec, {
+        authorizePatch: options?.approvedMutationAuthorization
+      });
     }
 
     if (call.name === 'run_command') {

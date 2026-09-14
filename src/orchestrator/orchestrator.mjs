@@ -8,6 +8,7 @@ import {
 import { createHandoffPacket } from './handoff.mjs';
 import { validateHandoffPacket } from './handoff-validation.mjs';
 import { computeCheckpointHash } from '../store.mjs';
+import { authorizeTool } from '../policy.mjs';
 import {
   buildChangeEvidence,
   captureFileState
@@ -672,13 +673,89 @@ export function createOrchestrator({
           return;
         }
 
+        const toolCall = {
+          name: toolName,
+          arguments: toolArgs
+        };
+        const policy = authorizeTool(toolCall, await getConfig());
+
+        if (policy.decision === 'requires_approval') {
+          let actionRecord = null;
+
+          if (store?.recordToolAction) {
+            actionRecord = store.recordToolAction({
+              taskId,
+              toolName,
+              args: toolArgs,
+              policyDecision: 'requires_approval',
+              status: 'pending',
+              startedAt: new Date().toISOString()
+            });
+          }
+
+          if (!actionRecord || !store?.createApprovalRequest) {
+            throw new Error(
+              'Approval flow is unavailable; mutation was not executed.'
+            );
+          }
+
+          let approval = null;
+
+          if (store.getApprovalRequestByToolAction) {
+            approval = store.getApprovalRequestByToolAction(
+              actionRecord.id
+            );
+          }
+
+          if (!approval) {
+            const expiresAt = new Date(
+              Date.now() + 5 * 60 * 1000
+            ).toISOString();
+
+            approval = store.createApprovalRequest({
+              id: randomUUID(),
+              taskId,
+              toolActionId: actionRecord.id,
+              toolName,
+              args: toolArgs,
+              expiresAt
+            });
+          }
+
+          await updateTask(current, item => {
+            transitionTask(item, 'awaiting_approval');
+            item.message =
+              `Approval required for ${toolName}.`;
+            item.steps.push({
+              at: new Date().toISOString(),
+              kind: 'approval_required',
+              name: toolName,
+              detail: 'A parameter-bound approval request was created.'
+            });
+            checkpoint(
+              item,
+              `Approval required: ${toolName}`
+            );
+          });
+
+          emit?.('approval_required', {
+            taskId,
+            toolName,
+            approvalId: approval.id,
+            message: policy.reason ||
+              `Approval required for ${toolName}.`
+          });
+
+          return;
+        }
+
         let actionRecord = null;
         if (store?.recordToolAction) {
           actionRecord = store.recordToolAction({
             taskId,
             toolName,
             args: toolArgs,
-            policyDecision: 'allowed',
+            policyDecision: policy.decision,
             status: 'pending',
             startedAt: new Date().toISOString()
           });
@@ -885,10 +962,311 @@ export function createOrchestrator({
   }
 }
 
+  async function executeApprovedAction(request = {}) {
+    const isLegacyApprovalId = typeof request === 'string';
+    const approvalId = isLegacyApprovalId
+      ? request
+      : request?.approvalId;
+    let taskId = isLegacyApprovalId
+      ? null
+      : (request?.taskId ?? null);
+
+    if (!store?.getApprovalRequest || !store?.getToolAction) {
+      throw new Error('Approved action execution requires the persistent store.');
+    }
+
+    if (!approvalId) {
+      throw new Error('approvalId is required.');
+    }
+
+    const approval = store.getApprovalRequest(approvalId);
+
+    if (!approval) {
+      throw new Error('Approval request not found');
+    }
+
+    const approvedTaskId = String(approval.taskId);
+
+    if (taskId !== null && String(taskId) !== approvedTaskId) {
+      throw new Error('Approval request task binding mismatch');
+    }
+
+    taskId = approvedTaskId;
+
+    const action = store.getToolAction(approval.toolActionId);
+
+    if (!action) {
+      throw new Error('Approved tool action not found');
+    }
+
+    if (action.toolName !== 'write_file' && action.toolName !== 'patch_file') {
+      throw new Error(
+        `Approved execution is restricted to file mutations; received "${action.toolName}".`
+      );
+    }
+
+    if (approval.status !== 'approved' && action.status !== 'success') {
+      throw new Error(
+        `Approval request is not executable with status "${approval.status}".`
+      );
+    }
+
+    if (String(action.taskId) !== String(taskId)) {
+      throw new Error('Tool action task binding mismatch');
+    }
+
+    if (String(action.id) !== String(approval.toolActionId)) {
+      throw new Error('Tool action identity mismatch');
+    }
+
+    if (String(action.toolName) !== String(approval.toolName)) {
+      throw new Error('Tool action tool binding mismatch');
+    }
+
+    const persistedArgs = action.args || {};
+
+    // A previously successful action may only need its still-approved
+    // approval request to be consumed. Never execute the broker again.
+    if (action.status === 'success') {
+      if (approval.status === 'consumed') {
+        return {
+          ok: true,
+          replayed: true,
+          approval,
+          action,
+          result: null
+        };
+      }
+
+      const consumed = store.consumeApprovalRequest(approvalId, {
+        taskId,
+        toolActionId: action.id,
+        toolName: action.toolName,
+        args: persistedArgs
+      });
+
+      return {
+        ok: true,
+        replayed: true,
+        approval: consumed,
+        action,
+        result: null
+      };
+    }
+
+    // claimToolActionForApproval performs the authoritative canonical
+    // argument-binding check. Do not reconstruct or accept model arguments here.
+    const claimedAction = store.claimToolActionForApproval({
+      taskId,
+      toolActionId: action.id,
+      toolName: action.toolName,
+      args: persistedArgs
+    });
+
+    if (!claimedAction || claimedAction.status !== 'in_progress') {
+      throw new Error('Approved tool action was not successfully claimed.');
+    }
+
+    const broker = await toolBrokerFactory();
+
+    const isFilesystemMutation =
+      action.toolName === 'write_file' ||
+      action.toolName === 'patch_file';
+
+    const evidenceFsBroker = broker?.filesystemBroker;
+
+    const canCaptureEvidence =
+      isFilesystemMutation &&
+      evidenceFsBroker &&
+      typeof persistedArgs.path === 'string' &&
+      persistedArgs.path.trim().length > 0;
+
+    let beforeState = null;
+
+    if (canCaptureEvidence) {
+      beforeState = await captureFileState(
+        evidenceFsBroker,
+        persistedArgs.path
+      );
+    }
+
+    const approvedMutationAuthorization =
+      async details => {
+        if (
+          details?.operation === 'write' &&
+          action.toolName === 'write_file'
+        ) {
+          if (
+            String(details.path || '') !== String(persistedArgs.path || '') ||
+            String(details.content || '') !== String(persistedArgs.content || '')
+          ) {
+            return {
+              approved: false,
+              reason: 'Approved write action binding mismatch.'
+            };
+          }
+
+          return true;
+        }
+
+        if (
+          details?.operation === 'patch' &&
+          action.toolName === 'patch_file'
+        ) {
+          const persistedPatch = persistedArgs.patch || {
+            targetContent: persistedArgs.targetContent,
+            replacementContent: persistedArgs.replacementContent
+          };
+
+          if (
+            String(details.path || '') !== String(persistedArgs.path || '') ||
+            JSON.stringify(details.patch ?? {}) !== JSON.stringify(persistedPatch ?? {})
+          ) {
+            return {
+              approved: false,
+              reason: 'Approved patch action binding mismatch.'
+            };
+          }
+
+          return true;
+        }
+
+        return {
+          approved: false,
+          reason: 'Approved mutation operation binding mismatch.'
+        };
+      };
+
+    try {
+      emit?.('tool_started', {
+        taskId,
+        toolName: action.toolName,
+        approved: true,
+        approvalId
+      });
+
+      const persistedCall = {
+        name: action.toolName,
+        arguments: persistedArgs
+      };
+
+      const brokerCall = {
+        ...persistedCall
+      };
+
+      Object.defineProperty(brokerCall, 'function', {
+        value: {
+          ...persistedCall
+        },
+        enumerable: false,
+        configurable: false,
+        writable: false
+      });
+
+      const result = await broker.execute(
+        brokerCall,
+        {
+          approvedMutationAuthorization
+        }
+      );
+
+      let evidence = null;
+
+      if (canCaptureEvidence) {
+        const afterState = await captureFileState(
+          evidenceFsBroker,
+          persistedArgs.path
+        );
+
+        evidence = buildChangeEvidence({
+          toolActionId: claimedAction.id,
+          idempotencyKey: claimedAction.idempotencyKey,
+          taskId,
+          toolName: action.toolName,
+          operation:
+            action.toolName === 'patch_file' ? 'patch' : 'write',
+          relativePath: persistedArgs.path,
+          beforeState,
+          afterState
+        });
+      }
+
+      if (store?.completeToolActionWithEvidence) {
+        store.completeToolActionWithEvidence({
+          actionRecord: claimedAction,
+          resultSummary: JSON.stringify(result).slice(0, 12_000),
+          evidence
+        });
+      } else if (store?.recordToolAction) {
+        store.recordToolAction({
+          ...claimedAction,
+          status: 'success',
+          finishedAt: new Date().toISOString(),
+          resultSummary: JSON.stringify(result).slice(0, 12_000)
+        });
+      }
+
+      const consumed = store.consumeApprovalRequest(approvalId, {
+        taskId,
+        toolActionId: action.id,
+        toolName: action.toolName,
+        args: persistedArgs
+      });
+
+      emit?.('tool_completed', {
+        taskId,
+        toolName: action.toolName,
+        approvalId,
+        result
+      });
+
+      return {
+        ok: true,
+        replayed: false,
+        approval: consumed,
+        action: store.getToolAction(action.id),
+        result
+      };
+    } catch (error) {
+      // If the mutation may already have happened, do not convert the action
+      // back into pending or retry it automatically. Existing recovery rules
+      // will park unfinished actions for verification.
+      if (store?.recordToolAction && claimedAction) {
+        try {
+          const currentAction = store.getToolAction(claimedAction.id);
+
+          // Only an action that is still in_progress is uncertain about
+          // whether physical execution completed. A success record is already
+          // durable evidence and must never be downgraded.
+          if (currentAction?.status === 'in_progress') {
+            store.recordToolAction({
+              ...currentAction,
+              status: 'needs_verification',
+              finishedAt: new Date().toISOString(),
+              error: String(error.message).slice(0, 2000)
+            });
+          }
+        } catch {
+          // Preserve the original execution error.
+        }
+      }
+
+      emit?.('tool_failed', {
+        taskId,
+        toolName: action.toolName,
+        approvalId,
+        error: String(error.message).slice(0, 1000)
+      });
+
+      throw error;
+    }
+  }
+
   return {
     checkpoint,
     updateTask,
     runTask,
-    pauseTask
+    pauseTask,
+    executeApprovedAction
   };
 }
