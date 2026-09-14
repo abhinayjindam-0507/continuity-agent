@@ -114,7 +114,53 @@ test('4b. project explorer wires the read-only backend file APIs', async () => {
   );
 });
 
-test('4c. explorer and editor render no hardcoded fake project content', async () => {
+test('4c. Inspect Diff wires the read-only project changes API and renders line diffs', async () => {
+  const content = await readFile(indexHtmlPath, 'utf8');
+
+  assert.ok(
+    content.includes('id="btnInspectDiff"'),
+    'Inspect Diff control must have a stable button ID'
+  );
+
+  assert.ok(
+    content.includes('/api/project/changes?'),
+    'Inspect Diff must call the read-only project changes API'
+  );
+
+  assert.ok(
+    content.includes('taskId: taskId'),
+    'Inspect Diff must scope changes to the active task'
+  );
+
+  assert.ok(
+    content.includes('path: path'),
+    'Inspect Diff must scope changes to the selected project-relative path'
+  );
+
+  assert.ok(
+    content.includes("limit: '50'"),
+    'Inspect Diff must use a bounded changes result limit'
+  );
+
+  assert.ok(
+    content.includes("diff.kind === 'lines'"),
+    "Inspect Diff must consume the backend's lines diff contract"
+  );
+
+  assert.ok(
+    content.includes("line.type === 'add'") &&
+      content.includes("line.type === 'del'"),
+    'Inspect Diff must distinguish added and removed diff lines'
+  );
+
+  assert.doesNotMatch(
+    content,
+    /\/api\/project\/(write|patch|delete|rename|move|upload|mkdir)/,
+    'Inspect Diff must remain read-only'
+  );
+});
+
+test('4d. explorer and editor render no hardcoded fake project content', async () => {
   const content = await readFile(indexHtmlPath, 'utf8');
 
   // Scope: the Step 2 workspace (project rail + explorer sub-sidebar +
@@ -147,7 +193,7 @@ test('4c. explorer and editor render no hardcoded fake project content', async (
   assert.ok(content.includes('Binary file'), 'Viewer must handle binary metadata state');
 });
 
-test('4d. explorer treats backend paths as relative project paths only', async () => {
+test('4e. explorer treats backend paths as relative project paths only', async () => {
   const content = await readFile(indexHtmlPath, 'utf8');
 
   // Tree model must sanitize path segments rather than trusting raw input

@@ -1975,7 +1975,7 @@
           </div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <button class="btn-sync" style="width: auto; padding: 3px 8px; font-size: 10.5px;">Rewrite Selection</button>
-            <button class="btn-sync" style="width: auto; padding: 3px 8px; font-size: 10.5px;">Inspect Diff</button>
+            <button class="btn-sync" id="btnInspectDiff" style="width: auto; padding: 3px 8px; font-size: 10.5px;">Inspect Diff</button>
             <button class="btn-sync" style="width: auto; padding: 3px 8px; font-size: 10.5px;">Lock File</button>
           </div>
         </div>
@@ -2991,6 +2991,93 @@
       renderEditorMessage('Select a file from Project Files to view its contents.');
     }
 
+    async function inspectSelectedFileDiff() {
+      if (!activeTaskId) {
+        renderEditorMessage('No active task selected.', 'Open or resume a task before inspecting persisted changes.');
+        addConsoleEntry('DIFF', 'Cannot inspect changes: no active task selected.', 'warn');
+        return;
+      }
+
+      if (!selectedFilePath) {
+        renderEditorMessage('No file selected.', 'Select a project file before inspecting its persisted changes.');
+        addConsoleEntry('DIFF', 'Cannot inspect changes: no project file selected.', 'warn');
+        return;
+      }
+
+      const path = selectedFilePath;
+      const taskId = activeTaskId;
+
+      setEditorChrome(path, 'Loading persisted changes…');
+      renderEditorMessage(`Inspecting changes for ${path}…`);
+
+      try {
+        const query = new URLSearchParams({
+          taskId: taskId,
+          path: path,
+          limit: '50'
+        });
+
+        const res = await api(`/api/project/changes?${query.toString()}`);
+
+        if (!Array.isArray(res.changes) || res.changes.length === 0) {
+          renderEditorMessage('No persisted changes found.', `No filesystem change evidence is recorded for ${path} in task ${taskId}.`);
+          setEditorChrome(path, 'No persisted changes');
+          addConsoleEntry('DIFF', `No persisted changes found for ${path}.`, 'info');
+          return;
+        }
+
+        const latest = res.changes[res.changes.length - 1];
+        const changeType = latest.changeType || 'metadata_only';
+        const diff = latest.diff;
+
+        const summary = [
+          `Change: ${changeType}`,
+          `Operation: ${latest.operation || 'unknown'}`,
+          `Captured: ${fmtTime(latest.capturedAt)}`
+        ].join(' • ');
+
+        const area = document.getElementById('diffCodeArea');
+
+        if (!area) return;
+
+        if (diff && diff.kind === 'lines' && Array.isArray(diff.lines)) {
+
+          area.innerHTML = diff.lines.map(line => {
+            const prefix = line.type === 'add'
+              ? '+'
+              : (line.type === 'del' ? '-' : ' ');
+
+            const className = line.type === 'add'
+              ? 'color: var(--emerald-soft);'
+              : (line.type === 'del' ? 'color: var(--rose-soft);' : 'color: var(--text-main);');
+
+            const beforeLine = line.before == null ? ' ' : String(line.before);
+            const afterLine = line.after == null ? ' ' : String(line.after);
+
+            return `<div class="diff-line">` +
+              `<span class="diff-ln">${esc(beforeLine)}/${esc(afterLine)}</span>` +
+              `<span class="diff-code" style="${className}">${esc(prefix)} ${esc(line.text)}</span>` +
+              `</div>`;
+          }).join('');
+        } else {
+          area.innerHTML =
+            `<div class="agent-callout" style="margin: 8px 16px;">` +
+              `<span style="color: var(--cyan-soft);">ⓘ</span>` +
+              `<span>${esc(diff && diff.reason ? diff.reason : 'No textual diff is available for this change.')}</span>` +
+            `</div>` +
+            `<div class="diff-line"><span class="diff-ln"> </span><span class="diff-code" style="color: var(--text-muted);">${esc(summary)}</span></div>`;
+        }
+
+        area.scrollTop = 0;
+        setEditorChrome(path, summary);
+        addConsoleEntry('DIFF', `Inspected persisted change for ${path}: ${changeType}.`, 'info');
+      } catch (err) {
+        renderEditorMessage('Could not inspect changes.', err.message || 'The persisted change record could not be loaded.');
+        setEditorChrome(path, 'Change inspection failed');
+        addConsoleEntry('DIFF', `Change inspection failed for ${path}: ${err.message}`, 'error');
+      }
+    }
+
     // --- Data Bootstrap ---
     async function loadWorkspace() {
       try {
@@ -3174,6 +3261,9 @@
       if (btnClearWs) btnClearWs.onclick = () => { document.getElementById('consoleBody').innerHTML = ''; };
 
       // Project Explorer (read-only): refresh, folder toggle, file open, close tab
+      const btnInspectDiff = document.getElementById('btnInspectDiff');
+      if (btnInspectDiff) btnInspectDiff.onclick = inspectSelectedFileDiff;
+
       const btnRefreshFiles = document.getElementById('btnRefreshProjectFiles');
       if (btnRefreshFiles) btnRefreshFiles.onclick = () => loadProjectFiles();
 
