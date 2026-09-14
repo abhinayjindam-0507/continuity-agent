@@ -78,6 +78,89 @@ test('4. frontend wires pause and resume endpoints', async () => {
   );
 });
 
+test('4b. project explorer wires the read-only backend file APIs', async () => {
+  const content = await readFile(indexHtmlPath, 'utf8');
+
+  // Dynamic listing + file content come from the Step 1 backend endpoints
+  assert.ok(
+    content.includes('/api/project/files?path=.'),
+    'Explorer must load the listing from GET /api/project/files?path=.'
+  );
+  assert.ok(
+    content.includes('/api/project/file?path='),
+    'File viewer must load contents from GET /api/project/file?path='
+  );
+  assert.ok(
+    content.includes('encodeURIComponent(path)'),
+    'Relative project paths must be URL-encoded when requested'
+  );
+
+  // Explorer tree is a dynamic container with folder/file interaction hooks
+  assert.ok(content.includes('id="projectFileTree"'), 'Must contain dynamic explorer tree');
+  assert.ok(content.includes('data-dir='), 'Explorer must support folder toggles');
+  assert.ok(content.includes('data-path='), 'Explorer must carry relative file paths');
+  assert.ok(content.includes('id="btnRefreshProjectFiles"'), 'Explorer must expose a refresh control');
+
+  // Editor chrome shows the selected file and read-only state
+  assert.ok(content.includes('id="editorActiveTabName"'), 'Editor tab must display the open file name');
+  assert.ok(content.includes('id="headerBreadcrumbFile"'), 'Header breadcrumb must display the open file path');
+  assert.ok(content.includes('id="editorContextStatus"'), 'Editor sub-bar must show file state');
+
+  // Read-only contract: no mutating project endpoints may be wired
+  assert.doesNotMatch(
+    content,
+    /\/api\/project\/(write|patch|delete|rename|move|upload|mkdir)/,
+    'Frontend must not reference any mutating project filesystem endpoint'
+  );
+});
+
+test('4c. explorer and editor render no hardcoded fake project content', async () => {
+  const content = await readFile(indexHtmlPath, 'utf8');
+
+  // Scope: the Step 2 workspace (project rail + explorer sub-sidebar +
+  // central editor). Home-view dashboard chrome outside this region is
+  // pre-existing Stitch template material for later milestones.
+  const workspaceStart = content.indexOf('id="viewWorkspace"');
+  // Skip the CSS contract-marker comment that mentions id="bottomConsole".
+  const workspaceEnd = content.indexOf('id="bottomConsole"', workspaceStart);
+  assert.ok(workspaceStart !== -1 && workspaceEnd > workspaceStart, 'Workspace region must exist');
+  const workspace = content.slice(workspaceStart, workspaceEnd);
+
+  // Fake workspace files from the original Stitch template must be gone
+  for (const fake of [
+    'filesystem_broker.ts',
+    'permission_policy.ts',
+    'session_jail.ts',
+    'broker.security.spec.ts',
+    'SecureFilesystemBroker',
+    'Removed by Agent',
+    'Synthesized by Qwen 2.5',
+    'Agent Active: Lines 42-58'
+  ]) {
+    assert.ok(!workspace.includes(fake), `Hardcoded fake content must not ship in workspace: ${fake}`);
+  }
+
+  // Truthful states are declared up front
+  assert.ok(content.includes('Loading project files…'), 'Explorer must show a loading state');
+  assert.ok(content.includes('No project files available'), 'Explorer must show an empty state');
+  assert.ok(content.includes('Could not load project files'), 'Explorer must show an error state');
+  assert.ok(content.includes('Binary file'), 'Viewer must handle binary metadata state');
+});
+
+test('4d. explorer treats backend paths as relative project paths only', async () => {
+  const content = await readFile(indexHtmlPath, 'utf8');
+
+  // Tree model must sanitize path segments rather than trusting raw input
+  assert.ok(
+    content.includes("p !== '..'") && content.includes("p !== '.'"),
+    'Hierarchy inference must drop traversal-like segments from backend paths'
+  );
+  assert.ok(
+    content.includes('escAttr'),
+    'File paths rendered into attributes must be attribute-escaped'
+  );
+});
+
 test('5. event deduplication and lastSeq tracking contract', () => {
   let lastSeq = 0;
   const seenEventIds = new Set();

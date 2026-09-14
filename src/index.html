@@ -1489,7 +1489,7 @@
           continuity-agent (main)
         </span>
         <span style="color: var(--text-muted);">&gt;</span>
-        <span class="file-path">src / broker / filesystem_broker.ts</span>
+        <span class="file-path" id="headerBreadcrumbFile">—</span>
       </div>
     </div>
 
@@ -1931,33 +1931,17 @@
             </div>
           </div>
 
-          <!-- Project Files Tree -->
+          <!-- Project Files Tree (populated dynamically from GET /api/project/files) -->
           <div>
             <div class="section-label">
               <span>Project Files</span>
-              <span style="color: var(--cyan-soft)">↻</span>
+              <span style="display: flex; align-items: center; gap: 6px;">
+                <span id="projectFileCount" style="font-size: 9px; color: var(--text-dim); font-family: var(--font-mono);"></span>
+                <span id="btnRefreshProjectFiles" style="color: var(--cyan-soft); cursor: pointer;" title="Refresh project file listing">↻</span>
+              </span>
             </div>
-            <div class="repo-tree">
-              <div class="repo-node"><span>▾ 📁 src</span></div>
-              <div class="repo-node" style="padding-left: 14px;"><span>▾ 📁 broker</span></div>
-              <div class="repo-node highlight-target" style="padding-left: 24px;">
-                <span>📄 filesystem_broker.ts</span>
-                <span style="color: var(--cyan-soft); font-size: 9px; font-weight: 700;">● M</span>
-              </div>
-              <div class="repo-node" style="padding-left: 24px;">
-                <span>📄 permission_policy.ts</span>
-                <span style="color: var(--cyan-soft); font-size: 9px; font-weight: 700;">M</span>
-              </div>
-              <div class="repo-node" style="padding-left: 24px;">
-                <span>📄 session_jail.ts</span>
-                <span style="color: var(--emerald-soft); font-size: 9px; font-weight: 700;">A</span>
-              </div>
-              <div class="repo-node" style="padding-left: 14px;"><span>▸ 📁 security</span></div>
-              <div class="repo-node" style="padding-left: 14px;"><span>▾ 📁 tests</span></div>
-              <div class="repo-node" style="padding-left: 24px;">
-                <span>📄 broker.security.spec.ts</span>
-                <span style="color: var(--cyan-soft); font-size: 9px; font-weight: 700;">●</span>
-              </div>
+            <div id="projectFileTree" class="repo-tree">
+              <div class="repo-node" style="cursor: default;"><span style="color: var(--text-muted);">Loading project files…</span></div>
             </div>
           </div>
         </div>
@@ -1968,8 +1952,8 @@
         <div class="editor-tabs-bar">
           <div style="display: flex; align-items: center; gap: 4px; height: 100%;">
             <div style="height: 100%; padding: 0 12px; display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-family: var(--font-mono); color: var(--text-main); background: var(--bg-editor); border-bottom: 2px solid var(--cyan-soft);">
-              <span>{ } filesystem_broker.ts</span>
-              <span style="font-size: 11px; opacity: 0.6;">✕</span>
+              <span id="editorActiveTabName">{ } no file open</span>
+              <span id="editorTabClose" style="font-size: 11px; opacity: 0.6; cursor: pointer;" title="Close file">✕</span>
             </div>
             <div style="height: 100%; padding: 0 12px; display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-family: var(--font-mono); color: var(--text-muted); cursor: pointer;" id="btnOpenTerminalWorkspace">
               <span>&gt;_ Terminal</span>
@@ -1987,7 +1971,7 @@
         <div class="editor-sub-bar">
           <div style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--cyan-soft); font-weight: 600;">
             <span class="pulsing-dot"></span>
-            <span>Agent Active: Lines 42-58</span>
+            <span id="editorContextStatus">No file loaded</span>
           </div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <button class="btn-sync" style="width: auto; padding: 3px 8px; font-size: 10.5px;">Rewrite Selection</button>
@@ -1996,68 +1980,9 @@
           </div>
         </div>
 
+        <!-- File content is rendered here from GET /api/project/file (never placeholder content) -->
         <div class="diff-code-area" id="diffCodeArea">
-          <div class="diff-line"><span class="diff-ln">35</span><span class="diff-code" style="color: var(--text-muted); font-style: italic;">// Continuity Agent auto-instrumented sandbox container</span></div>
-          <div class="diff-line"><span class="diff-ln">37</span><span class="diff-code"><span style="color: #f472b6; font-weight: 600;">import</span> * <span style="color: #f472b6;">as</span> path <span style="color: #f472b6;">from</span> <span style="color: #34d399;">'node:path'</span>;</span></div>
-          <div class="diff-line"><span class="diff-ln">38</span><span class="diff-code"><span style="color: #f472b6; font-weight: 600;">import</span> { SecurityViolationError } <span style="color: #f472b6;">from</span> <span style="color: #34d399;">'../errors/security'</span>;</span></div>
-          <div class="diff-line"><span class="diff-ln">39</span><span class="diff-code"><span style="color: #f472b6; font-weight: 600;">import</span> { IFilesystemBroker, JailOptions } <span style="color: #f472b6;">from</span> <span style="color: #34d399;">'./types'</span>;</span></div>
-          <div class="diff-line"><span class="diff-ln">41</span><span class="diff-code"><span style="color: #f472b6; font-weight: 600;">export class</span> <span style="color: #38bdf8; font-weight: 600;">SecureFilesystemBroker</span> <span style="color: #f472b6;">implements</span> <span style="color: #f59e0b;">IFilesystemBroker</span> {</span></div>
-          <div class="diff-line"><span class="diff-ln">45</span><span class="diff-code">  <span style="color: #f472b6; font-weight: 600;">constructor</span>(options: <span style="color: #f59e0b;">JailOptions</span>) {</span></div>
-          <div class="diff-line"><span class="diff-ln">46</span><span class="diff-code">    <span style="color: #60a5fa;">this</span>.sandboxRoot = path.<span style="color: #60a5fa;">resolve</span>(options.rootPath);</span></div>
-          <div class="diff-line"><span class="diff-ln">48</span><span class="diff-code">  }</span></div>
-          <div class="diff-line"><span class="diff-ln">50</span><span class="diff-code">  <span style="color: #f472b6; font-weight: 600;">public async</span> <span style="color: #60a5fa;">resolvePath</span>(rawInputPath: <span style="color: #f59e0b;">string</span>): <span style="color: #f59e0b;">Promise&lt;string&gt;</span> {</span></div>
-
-          <!-- Red Diff Deletions -->
-          <div class="diff-line diff-del">
-            <span class="diff-ln">51</span>
-            <span class="diff-code">-   const target = path.join(this.sandboxRoot, rawInputPath); <span class="diff-badge del">Removed by Agent</span></span>
-          </div>
-          <div class="diff-line diff-del">
-            <span class="diff-ln">52</span>
-            <span class="diff-code">-   // [INSECURE: vulnerable to traversal]</span>
-          </div>
-
-          <!-- Green Diff Additions -->
-          <div class="diff-line diff-add">
-            <span class="diff-ln">53</span>
-            <span class="diff-code">+   const decoded = decodeURIComponent(rawInputPath); <span class="diff-badge add">Synthesized by Qwen 2.5</span></span>
-          </div>
-          <div class="diff-line diff-add">
-            <span class="diff-ln">54</span>
-            <span class="diff-code">+   const normalized = path.normalize(decoded).replace(/^(\.\.[\/\\])+/, '');</span>
-          </div>
-          <div class="diff-line diff-add">
-            <span class="diff-ln">55</span>
-            <span class="diff-code">+   const target = path.resolve(this.sandboxRoot, normalized);</span>
-          </div>
-          <div class="diff-line diff-add">
-            <span class="diff-ln">56</span>
-            <span class="diff-code">+   if (!target.startsWith(this.sandboxRoot)) {</span>
-          </div>
-          <div class="diff-line diff-add">
-            <span class="diff-ln">57</span>
-            <span class="diff-code">+     throw new SecurityViolationError(`Traversal escape detected: ${rawInputPath}`);</span>
-          </div>
-          <div class="diff-line diff-add">
-            <span class="diff-ln">58</span>
-            <span class="diff-code">+   }</span>
-          </div>
-          <div class="diff-line diff-add">
-            <span class="diff-ln">59</span>
-            <span class="diff-code">+   return target;</span>
-          </div>
-
-          <div class="agent-callout">
-            <span style="color: var(--cyan-soft);">✦</span>
-            <span>Continuity Agent modifying path verification logic</span>
-          </div>
-
-          <div class="diff-line"><span class="diff-ln">60</span><span class="diff-code">  }</span></div>
-          <div class="diff-line"><span class="diff-ln">62</span><span class="diff-code">  <span style="color: #f472b6; font-weight: 600;">public async</span> <span style="color: #60a5fa;">readSecure</span>(relativePath: <span style="color: #f59e0b;">string</span>): <span style="color: #f59e0b;">Promise&lt;Buffer&gt;</span> {</span></div>
-          <div class="diff-line"><span class="diff-ln">63</span><span class="diff-code">    <span style="color: #f472b6;">const</span> verifiedPath = <span style="color: #f472b6;">await this</span>.<span style="color: #60a5fa;">resolvePath</span>(relativePath);</span></div>
-          <div class="diff-line"><span class="diff-ln">64</span><span class="diff-code">    <span style="color: #f472b6;">return</span> fs.promises.<span style="color: #60a5fa;">readFile</span>(verifiedPath);</span></div>
-          <div class="diff-line"><span class="diff-ln">65</span><span class="diff-code">  }</span></div>
-          <div class="diff-line"><span class="diff-ln">66</span><span class="diff-code">}</span></div>
+          <div class="diff-line"><span class="diff-ln">1</span><span class="diff-code" style="color: var(--text-muted); font-style: italic;">Select a file from Project Files to view its contents.</span></div>
         </div>
 
         <!-- Activity Stream Console in Workspace (Contract Requirement: id="bottomConsole") -->
@@ -2291,6 +2216,8 @@
      * - POST /api/tasks/:id/continue
      * - /api/config
      * - /api/health
+     * - /api/project/files (read-only project explorer listing)
+     * - /api/project/file (read-only project file contents)
      */
 
     // --- State ---
@@ -2305,6 +2232,7 @@
 
     // --- Utilities ---
     const esc = s => String(s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const escAttr = s => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const fmtTime = iso => {
       if (!iso) return '';
       try {
@@ -2851,6 +2779,218 @@
       }
     }
 
+    // --- Project Explorer & Read-Only File Viewer ---
+    // Paths are treated as opaque, backend-issued relative project paths.
+    // All filesystem authority (scoping, sensitive paths, size bounds) stays
+    // in the server's filesystem broker; this layer only renders responses.
+    let projectFiles = [];
+    let projectFilesError = null;
+    let projectTreeInitialized = false;
+    let selectedFilePath = null;
+    let expandedDirs = new Set();
+    let fileLoadToken = 0;
+
+    function projectStateNode(text) {
+      return `<div class="repo-node" style="cursor: default;"><span style="color: var(--text-muted);">${esc(text)}</span></div>`;
+    }
+
+    // Infer a directory hierarchy from the flat list of relative file paths
+    // returned by /api/project/files.
+    function buildProjectTreeModel(files) {
+      const root = { dirs: new Map(), files: [] };
+      for (const rel of files) {
+        if (typeof rel !== 'string' || !rel) continue;
+        const parts = rel.split('/').filter(p => p && p !== '.' && p !== '..');
+        if (!parts.length) continue;
+        let node = root;
+        for (let i = 0; i < parts.length - 1; i++) {
+          if (!node.dirs.has(parts[i])) {
+            node.dirs.set(parts[i], { name: parts[i], dirs: new Map(), files: [] });
+          }
+          node = node.dirs.get(parts[i]);
+        }
+        node.files.push({ name: parts[parts.length - 1], path: parts.join('/') });
+      }
+      return root;
+    }
+
+    function renderProjectTree() {
+      const container = document.getElementById('projectFileTree');
+      const countEl = document.getElementById('projectFileCount');
+      if (!container) return;
+      if (countEl) countEl.textContent = projectFilesError ? '' : `${projectFiles.length} files shown`;
+
+      if (projectFilesError) {
+        container.innerHTML =
+          projectStateNode('Could not load project files') +
+          `<div class="repo-node" style="cursor: default; padding-left: 14px;"><span style="color: var(--text-dim); font-size: 10px;">${esc(projectFilesError)}</span></div>`;
+        return;
+      }
+      if (!projectFiles.length) {
+        container.innerHTML = projectStateNode('No project files available');
+        return;
+      }
+
+      const model = buildProjectTreeModel(projectFiles);
+      const rows = [];
+
+      (function walk(node, prefix, depth) {
+        const indent = 10 + depth * 10;
+        const dirNames = [...node.dirs.keys()].sort((a, b) => a.localeCompare(b));
+        for (const dirName of dirNames) {
+          const dirPath = prefix ? `${prefix}/${dirName}` : dirName;
+          const expanded = expandedDirs.has(dirPath);
+          rows.push(
+            `<div class="repo-node" data-dir="${escAttr(dirPath)}" title="${escAttr(dirPath)}" style="padding-left: ${indent}px;"><span>${expanded ? '▾' : '▸'} 📁 ${esc(dirName)}</span></div>`
+          );
+          if (expanded) walk(node.dirs.get(dirName), dirPath, depth + 1);
+        }
+        const fileEntries = node.files.slice().sort((a, b) => a.name.localeCompare(b.name));
+        for (const file of fileEntries) {
+          const isSel = file.path === selectedFilePath;
+          rows.push(
+            `<div class="repo-node ${isSel ? 'highlight-target' : ''}" data-path="${escAttr(file.path)}" title="${escAttr(file.path)}" style="padding-left: ${indent}px;"><span>📄 ${esc(file.name)}</span></div>`
+          );
+        }
+      })(model, '', 0);
+
+      container.innerHTML = rows.join('');
+    }
+
+    async function loadProjectFiles() {
+      const container = document.getElementById('projectFileTree');
+      if (container) container.innerHTML = projectStateNode('Loading project files…');
+      projectFilesError = null;
+
+      try {
+        const res = await api('/api/project/files?path=.');
+        projectFiles = Array.isArray(res.files) ? res.files : [];
+        if (!projectTreeInitialized) {
+          projectTreeInitialized = true;
+          expandedDirs = new Set(buildProjectTreeModel(projectFiles).dirs.keys());
+        }
+        renderProjectTree();
+        addConsoleEntry('FILES', `Project listing loaded (${projectFiles.length} files)`, 'info');
+      } catch (err) {
+        projectFiles = [];
+        projectFilesError = err.message || 'Listing unavailable.';
+        renderProjectTree();
+        addConsoleEntry('FILES', `Project listing failed: ${err.message}`, 'error');
+      }
+    }
+
+    function setEditorChrome(path, statusText) {
+      const tab = document.getElementById('editorActiveTabName');
+      if (tab) tab.textContent = `{ } ${path.split('/').pop()}`;
+      const crumb = document.getElementById('headerBreadcrumbFile');
+      if (crumb) crumb.textContent = path.split('/').join(' / ');
+      const status = document.getElementById('editorContextStatus');
+      if (status) status.textContent = statusText;
+    }
+
+    function resetEditorChrome() {
+      const tab = document.getElementById('editorActiveTabName');
+      if (tab) tab.textContent = '{ } no file open';
+      const crumb = document.getElementById('headerBreadcrumbFile');
+      if (crumb) crumb.textContent = '—';
+      const status = document.getElementById('editorContextStatus');
+      if (status) status.textContent = 'No file loaded';
+    }
+
+    function renderEditorMessage(title, detail) {
+      const area = document.getElementById('diffCodeArea');
+      if (!area) return;
+      area.innerHTML =
+        `<div class="diff-line"><span class="diff-ln"> </span><span class="diff-code" style="color: var(--text-muted); font-style: italic;">${esc(title)}</span></div>` +
+        (detail
+          ? `<div class="diff-line"><span class="diff-ln"> </span><span class="diff-code" style="color: var(--text-dim); font-size: 11px;">${esc(detail)}</span></div>`
+          : '');
+    }
+
+    function renderTextFile(res, path) {
+      const content = typeof res.content === 'string' ? res.content : '';
+      const lines = content.split('\n');
+      if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+
+      const area = document.getElementById('diffCodeArea');
+      if (area) {
+        area.innerHTML = lines
+          .map((line, i) => `<div class="diff-line"><span class="diff-ln">${i + 1}</span><span class="diff-code">${esc(line)}</span></div>`)
+          .join('');
+        area.scrollTop = 0;
+      }
+
+      setEditorChrome(path, `Read-only • ${lines.length} ${lines.length === 1 ? 'line' : 'lines'} • ${res.size} bytes`);
+      addConsoleEntry('FILES', `Opened ${path} (${lines.length} lines, ${res.size} bytes)`, 'info');
+    }
+
+    function renderBinaryFile(res, path) {
+      const area = document.getElementById('diffCodeArea');
+      if (area) {
+        const kb = res.size ? (res.size / 1024).toFixed(1) : '0.0';
+        area.innerHTML = `
+          <div class="agent-callout" style="margin: 8px 16px;">
+            <span style="color: var(--cyan-soft);">⬛</span>
+            <span>Binary file — contents are not displayed as text.</span>
+          </div>
+          <div class="diff-line"><span class="diff-ln"> </span><span class="diff-code" style="color: var(--text-muted);">Path: ${esc(path)}</span></div>
+          <div class="diff-line"><span class="diff-ln"> </span><span class="diff-code" style="color: var(--text-muted);">Size: ${res.size} bytes (${kb} KB)</span></div>
+          <div class="diff-line"><span class="diff-ln"> </span><span class="diff-code" style="color: var(--text-muted);">Type: ${esc(res.contentType || 'application/octet-stream')}</span></div>
+        `;
+      }
+      setEditorChrome(path, `Binary file • ${res.size} bytes`);
+      addConsoleEntry('FILES', `Binary file opened as metadata only: ${path}`, 'info');
+    }
+
+    function renderFileError(err, path) {
+      const reason = err.statusCode === 404
+        ? 'File not found in the project.'
+        : (err.message || 'The file could not be read.');
+      const area = document.getElementById('diffCodeArea');
+      if (area) {
+        area.innerHTML = `
+          <div class="agent-callout" style="margin: 8px 16px; border-color: var(--rose-border); background: rgba(30, 12, 16, 0.92); color: var(--rose-soft);">
+            <span>⚠</span>
+            <span>Could not open ${esc(path)}</span>
+          </div>
+          <div class="diff-line"><span class="diff-ln"> </span><span class="diff-code" style="color: var(--text-muted);">${esc(reason)}</span></div>
+        `;
+      }
+      setEditorChrome(path, 'Unable to open file');
+      addConsoleEntry('FILES', `Could not open ${path}: ${err.message}`, 'error');
+    }
+
+    async function openProjectFile(path) {
+      if (typeof path !== 'string' || !path.trim()) return;
+      selectedFilePath = path;
+      renderProjectTree();
+
+      const token = ++fileLoadToken;
+      setEditorChrome(path, 'Loading…');
+      renderEditorMessage(`Loading ${path}…`);
+
+      try {
+        const res = await api(`/api/project/file?path=${encodeURIComponent(path)}`);
+        if (token !== fileLoadToken) return; // A newer selection superseded this response.
+        if (res.binary) {
+          renderBinaryFile(res, path);
+        } else {
+          renderTextFile(res, path);
+        }
+      } catch (err) {
+        if (token !== fileLoadToken) return;
+        renderFileError(err, path);
+      }
+    }
+
+    function closeEditorTab() {
+      fileLoadToken++;
+      selectedFilePath = null;
+      renderProjectTree();
+      resetEditorChrome();
+      renderEditorMessage('Select a file from Project Files to view its contents.');
+    }
+
     // --- Data Bootstrap ---
     async function loadWorkspace() {
       try {
@@ -3033,9 +3173,38 @@
       if (btnClearHome) btnClearHome.onclick = () => { document.getElementById('homeTerminalBody').innerHTML = ''; };
       if (btnClearWs) btnClearWs.onclick = () => { document.getElementById('consoleBody').innerHTML = ''; };
 
+      // Project Explorer (read-only): refresh, folder toggle, file open, close tab
+      const btnRefreshFiles = document.getElementById('btnRefreshProjectFiles');
+      if (btnRefreshFiles) btnRefreshFiles.onclick = () => loadProjectFiles();
+
+      const fileTree = document.getElementById('projectFileTree');
+      if (fileTree) {
+        fileTree.addEventListener('click', e => {
+          const fileNode = e.target.closest('[data-path]');
+          if (fileNode) {
+            openProjectFile(fileNode.dataset.path);
+            return;
+          }
+          const dirNode = e.target.closest('[data-dir]');
+          if (dirNode) {
+            const dirPath = dirNode.dataset.dir;
+            if (expandedDirs.has(dirPath)) {
+              expandedDirs.delete(dirPath);
+            } else {
+              expandedDirs.add(dirPath);
+            }
+            renderProjectTree();
+          }
+        });
+      }
+
+      const editorTabClose = document.getElementById('editorTabClose');
+      if (editorTabClose) editorTabClose.onclick = closeEditorTab;
+
       // Bootstrap
       loadWorkspace();
       connectSSE();
+      loadProjectFiles();
       if (window.location.hash === '#workspace' || window.location.search.includes('workspace')) {
         setView('workspace');
       }

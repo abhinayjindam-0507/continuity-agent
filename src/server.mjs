@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import { createToolBroker } from './tools/tool-broker.mjs';
+import { createFilesystemBroker } from './tools/filesystem-broker.mjs';
 import { createOrchestrator } from './orchestrator/orchestrator.mjs';
 import { ollamaChat } from './providers/ollama.mjs';
 import {
@@ -22,6 +23,15 @@ const dataRoot = join(appRoot, '.continuity-agent');
 const publicFile = join(appRoot, 'src', 'index.html');
 const port = Number(process.env.PORT || 4317);
 const projectRoot = resolve(process.env.PROJECT_ROOT || appRoot);
+
+// Sole filesystem authority for the project explorer APIs. The root is fixed
+// here by server configuration; no client input can ever widen it. All path
+// validation (traversal, symlinks, sensitive paths, size/entry bounds) is
+// owned by this broker, not by the HTTP layer.
+const projectFilesystem = createFilesystemBroker({
+  projectRoot,
+  allowAbsolute: false
+});
 
 // Real-time event layer
 const eventEmitter = createEventEmitter();
@@ -213,6 +223,91 @@ async function bodyOf(request) {
   }
 }
 
+const BINARY_SNIFF_BYTES = 8 * 1024;
+const BINARY_CONTROL_RATIO = 0.1;
+
+// Heuristic text/binary classification over a bounded sample: NUL bytes or a
+// high share of non-whitespace control bytes mark binary payloads. Binary
+// content is never returned to clients; only metadata travels as JSON.
+function isProbablyText(content) {
+  const sample = content.subarray(0, BINARY_SNIFF_BYTES);
+
+  if (sample.includes(0)) {
+    return false;
+  }
+
+  let controlBytes = 0;
+  for (const byte of sample) {
+    if (byte < 9 || (byte > 13 && byte < 32)) {
+      controlBytes += 1;
+    }
+  }
+
+  return sample.length === 0 || controlBytes / sample.length <= BINARY_CONTROL_RATIO;
+}
+
+function parsePositiveInt(raw) {
+  if (raw === null) {
+    return undefined;
+  }
+
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+// Broker failures that stem from the client's requested path are client
+// errors; anything else is a server fault and must not leak its message.
+function isMissingPathError(message) {
+  return message.includes('not found');
+}
+
+function isClientPathError(message) {
+  return (
+    message.startsWith('Invalid path') ||
+    message.includes('Absolute paths are not permitted') ||
+    message.includes('Path traversal detected') ||
+    message.includes('Symlink traversal detected') ||
+    message.includes('escapes approved project root') ||
+    message.includes('sensitive file or directory is blocked') ||
+    message.includes('exceeds maximum allowed limit') ||
+    message.includes('Target is not a')
+  );
+}
+
+// Defense in depth: broker messages already reference project-relative paths
+// only, but never let a host path reach a client even if a message changes.
+function scrubHostPaths(message) {
+  let scrubbed = message;
+
+  for (const root of [
+    projectFilesystem.canonicalRoot,
+    projectFilesystem.projectRoot
+  ]) {
+    if (root && root !== '/') {
+      scrubbed = scrubbed.split(root).join('[redacted]');
+    }
+  }
+
+  return scrubbed;
+}
+
+function respondToProjectPathError(response, error) {
+  const message =
+    typeof error?.message === 'string' && error.message
+      ? error.message
+      : 'Unexpected error.';
+
+  if (isMissingPathError(message)) {
+    return json(response, 404, { error: scrubHostPaths(message) });
+  }
+
+  if (isClientPathError(message)) {
+    return json(response, 400, { error: scrubHostPaths(message) });
+  }
+
+  return json(response, 500, { error: 'Project file request failed.' });
+}
+
 const toolSpec = [
   {
     type: 'function',
@@ -328,7 +423,10 @@ const server = createServer(async (request, response) => {
       url.pathname === '/'
     ) {
       response.writeHead(200, {
-        'content-type': 'text/html; charset=utf-8'
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-cache, no-store, must-revalidate',
+        'pragma': 'no-cache',
+        'expires': '0'
       });
 
       response.end(await readFile(publicFile));
@@ -569,6 +667,69 @@ const server = createServer(async (request, response) => {
         clientCount: eventEmitter.clientCount(),
         ...eventEmitter.getBufferStats()
       });
+    }
+
+    // ---- Project Explorer (read-only) ----
+    // GET /api/project/files?path=.&limit=N
+    // Bounded, project-scoped recursive file listing. Empty/absent path lists
+    // from the project root. Entry bounds, traversal/symlink/sensitive-path
+    // protection are enforced by the filesystem broker. The optional limit is
+    // passed through to the broker, which owns all clamping; this layer does
+    // not report truncation because the broker contract does not provide it.
+    if (
+      request.method === 'GET' &&
+      url.pathname === '/api/project/files'
+    ) {
+      const requestedPath = url.searchParams.get('path') ?? '.';
+      const requestedLimit = parsePositiveInt(url.searchParams.get('limit'));
+
+      try {
+        const listing = await projectFilesystem.listFiles(requestedPath, {
+          limit: requestedLimit
+        });
+
+        return json(response, 200, {
+          ok: true,
+          path: requestedPath || '.',
+          files: listing.files
+        });
+      } catch (error) {
+        return respondToProjectPathError(response, error);
+      }
+    }
+
+    // GET /api/project/file?path=<relative-path>
+    // Returns UTF-8 text content for a permitted project file. Binary
+    // payloads are reported as metadata only (binary: true, no content) and
+    // are never streamed back as text.
+    if (
+      request.method === 'GET' &&
+      url.pathname === '/api/project/file'
+    ) {
+      const requestedPath = url.searchParams.get('path') ?? '';
+
+      try {
+        const result = await projectFilesystem.readFile(requestedPath);
+
+        if (!isProbablyText(Buffer.from(result.content, 'utf8'))) {
+          return json(response, 200, {
+            path: result.path,
+            size: result.size,
+            binary: true,
+            contentType: 'application/octet-stream'
+          });
+        }
+
+        return json(response, 200, {
+          path: result.path,
+          size: result.size,
+          binary: false,
+          encoding: 'utf-8',
+          content: result.content
+        });
+      } catch (error) {
+        return respondToProjectPathError(response, error);
+      }
     }
 
     return json(response, 404, {
