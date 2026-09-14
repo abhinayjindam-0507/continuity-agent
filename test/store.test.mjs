@@ -998,3 +998,212 @@ test('22. mid-transaction write failure rolls back task snapshot, checkpoints, a
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('approval requests persist, bind exact arguments, and resolve only once', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-approval-test-'));
+
+  try {
+    const store = await openStore(dir);
+
+    const created = store.createApprovalRequest({
+      id: 'approval-1',
+      taskId: 'task-approval-1',
+      toolActionId: 'action-approval-1',
+      toolName: 'write_file',
+      args: {
+        path: 'src/example.js',
+        content: 'hello',
+        token: 'secret-value'
+      },
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+    });
+
+    assert.equal(created.id, 'approval-1');
+    assert.equal(created.taskId, 'task-approval-1');
+    assert.equal(created.toolActionId, 'action-approval-1');
+    assert.equal(created.toolName, 'write_file');
+    assert.equal(created.status, 'pending');
+    assert.equal(created.args.path, 'src/example.js');
+    assert.equal(created.args.content, 'hello');
+
+    // Sensitive values must not be persisted in plaintext.
+    assert.notEqual(created.args.token, 'secret-value');
+    assert.match(created.args.token, /^\[REDACTED:sha256:[a-f0-9]{64}\]$/);
+
+    // Exact replay is idempotent.
+    const replay = store.createApprovalRequest({
+      id: 'approval-1',
+      taskId: 'task-approval-1',
+      toolActionId: 'action-approval-1',
+      toolName: 'write_file',
+      args: {
+        content: 'hello',
+        token: 'secret-value',
+        path: 'src/example.js'
+      },
+      createdAt: created.createdAt,
+      expiresAt: created.expiresAt
+    });
+
+    assert.equal(replay.id, 'approval-1');
+    assert.equal(replay.status, 'pending');
+
+    // Reusing the approval ID with different bound arguments must fail closed.
+    assert.throws(
+      () => store.createApprovalRequest({
+        id: 'approval-1',
+        taskId: 'task-approval-1',
+        toolActionId: 'action-approval-1',
+        toolName: 'write_file',
+        args: {
+          path: 'src/other.js',
+          content: 'hello',
+          token: 'secret-value'
+        },
+        createdAt: '2026-09-14T10:00:00.000Z',
+        expiresAt: '2026-09-14T10:05:00.000Z'
+      }),
+      /identity conflict/
+    );
+
+    const approved = store.resolveApprovalRequest('approval-1', {
+      status: 'approved',
+      resolvedAt: '2026-09-14T10:01:00.000Z',
+      resolutionReason: 'User approved exact proposed change.'
+    });
+
+    assert.equal(approved.status, 'approved');
+    assert.equal(approved.resolvedAt, '2026-09-14T10:01:00.000Z');
+    assert.equal(
+      approved.resolutionReason,
+      'User approved exact proposed change.'
+    );
+
+    // A resolved approval cannot be resolved a second time.
+    assert.throws(
+      () => store.resolveApprovalRequest('approval-1', {
+        status: 'denied'
+      }),
+      /already resolved/
+    );
+
+    store.close();
+
+    // Approval survives store restart.
+    const reopened = await openStore(dir);
+    const recovered = reopened.getApprovalRequest('approval-1');
+
+    assert.equal(recovered.status, 'approved');
+    assert.equal(recovered.taskId, 'task-approval-1');
+    assert.equal(recovered.toolActionId, 'action-approval-1');
+    assert.equal(recovered.args.path, 'src/example.js');
+
+    reopened.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('expired approval requests fail closed and cannot become approved', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-approval-expiry-test-'));
+
+  try {
+    const store = await openStore(dir);
+
+    store.createApprovalRequest({
+      id: 'approval-expired-1',
+      taskId: 'task-expired-1',
+      toolActionId: 'action-expired-1',
+      toolName: 'write_file',
+      args: {
+        path: 'src/example.js',
+        content: 'expired'
+      },
+      createdAt: '2020-01-01T00:00:00.000Z',
+      expiresAt: '2020-01-01T00:01:00.000Z'
+    });
+
+    const resolved = store.resolveApprovalRequest('approval-expired-1', {
+      status: 'approved',
+      resolvedAt: '2026-09-14T10:02:00.000Z'
+    });
+
+    assert.equal(resolved.status, 'expired');
+    assert.equal(
+      resolved.resolutionReason,
+      'Approval request expired before resolution.'
+    );
+
+    assert.throws(
+      () => store.resolveApprovalRequest('approval-expired-1', {
+        status: 'approved'
+      }),
+      /already resolved/
+    );
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('approval request rejects invalid resolution status and invalid expiry', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-approval-invalid-test-'));
+
+  try {
+    const store = await openStore(dir);
+
+    store.createApprovalRequest({
+      id: 'approval-invalid-1',
+      taskId: 'task-invalid-1',
+      toolActionId: 'action-invalid-1',
+      toolName: 'write_file',
+      args: {
+        path: 'src/example.js'
+      },
+      createdAt: '2026-09-14T10:00:00.000Z',
+      expiresAt: '2026-09-14T10:05:00.000Z'
+    });
+
+    assert.throws(
+      () => store.resolveApprovalRequest('approval-invalid-1', {
+        status: 'pending'
+      }),
+      /Invalid approval resolution status/
+    );
+
+    store.close();
+
+    const invalidDir = await mkdtemp(join(tmpdir(), 'store-approval-invalid-expiry-'));
+
+    try {
+      const invalidStore = await openStore(invalidDir);
+
+      invalidStore.createApprovalRequest({
+        id: 'approval-invalid-expiry-1',
+        taskId: 'task-invalid-expiry-1',
+        toolActionId: 'action-invalid-expiry-1',
+        toolName: 'write_file',
+        args: {
+          path: 'src/example.js'
+        },
+        createdAt: '2026-09-14T10:00:00.000Z',
+        expiresAt: 'not-a-date'
+      });
+
+      assert.throws(
+        () => invalidStore.resolveApprovalRequest('approval-invalid-expiry-1', {
+          status: 'approved'
+        }),
+        /invalid expiration timestamp/
+      );
+
+      invalidStore.close();
+    } finally {
+      await rm(invalidDir, { recursive: true, force: true });
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

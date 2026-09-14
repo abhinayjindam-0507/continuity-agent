@@ -62,6 +62,14 @@ export const TOOL_ACTION_STATUSES = Object.freeze([
   'needs_verification'
 ]);
 
+export const APPROVAL_REQUEST_STATUSES = Object.freeze([
+  'pending',
+  'approved',
+  'denied',
+  'expired',
+  'consumed'
+]);
+
 const SENSITIVE_KEY_PATTERN = /(?:password|secret|token|credential|auth|key|private)/i;
 const MAX_CANONICAL_DEPTH = 5;
 const MAX_CANONICAL_ARRAY_LEN = 50;
@@ -227,6 +235,20 @@ export async function openStore(dataRoot) {
       captured_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS approval_requests (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      tool_action_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      arguments TEXT NOT NULL,
+      arguments_hash TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      resolved_at TEXT,
+      resolution_reason TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_task_events_task_id ON task_events(task_id);
     CREATE INDEX IF NOT EXISTS idx_checkpoints_task_id ON checkpoints(task_id);
     CREATE INDEX IF NOT EXISTS idx_tool_actions_task_id ON tool_actions(task_id);
@@ -234,6 +256,9 @@ export async function openStore(dataRoot) {
     CREATE INDEX IF NOT EXISTS idx_file_change_evidence_task_id ON file_change_evidence(task_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_file_change_evidence_idempotency ON file_change_evidence(idempotency_key);
     CREATE INDEX IF NOT EXISTS idx_file_change_evidence_action ON file_change_evidence(tool_action_id);
+    CREATE INDEX IF NOT EXISTS idx_approval_requests_task_id ON approval_requests(task_id);
+    CREATE INDEX IF NOT EXISTS idx_approval_requests_action ON approval_requests(tool_action_id);
+    CREATE INDEX IF NOT EXISTS idx_approval_requests_status_expiry ON approval_requests(status, expires_at);
   `);
 
   // On reopening store, mark any pending or in_progress tool actions as needs_verification
@@ -618,6 +643,200 @@ export async function openStore(dataRoot) {
     return null;
   }
 
+  function createApprovalRequest({
+    id = randomUUID(),
+    taskId,
+    toolActionId,
+    toolName,
+    args = {},
+    createdAt = new Date().toISOString(),
+    expiresAt
+  }) {
+    if (!taskId || !toolActionId || !toolName) {
+      throw new Error('taskId, toolActionId and toolName are required for approval request');
+    }
+
+    if (!expiresAt) {
+      throw new Error('expiresAt is required for approval request');
+    }
+
+    const canonicalArgs = canonicalizeToolArgs(args);
+    const argumentsJson = JSON.stringify(canonicalArgs);
+    const argumentsHash = createHash('sha256')
+      .update(argumentsJson, 'utf8')
+      .digest('hex');
+
+    const approvalId = String(id);
+    const normalizedTaskId = String(taskId);
+    const normalizedActionId = String(toolActionId);
+    const normalizedToolName = String(toolName).slice(0, 100);
+    const normalizedCreatedAt = String(createdAt);
+    const normalizedExpiresAt = String(expiresAt);
+
+    const existing = database.prepare(`
+      SELECT id,
+             task_id AS taskId,
+             tool_action_id AS toolActionId,
+             tool_name AS toolName,
+             arguments,
+             arguments_hash AS argumentsHash,
+             status,
+             created_at AS createdAt,
+             expires_at AS expiresAt,
+             resolved_at AS resolvedAt,
+             resolution_reason AS resolutionReason
+      FROM approval_requests
+      WHERE id = ?
+      LIMIT 1
+    `).get(approvalId);
+
+    if (existing) {
+      if (
+        existing.taskId !== normalizedTaskId ||
+        existing.toolActionId !== normalizedActionId ||
+        existing.toolName !== normalizedToolName ||
+        existing.argumentsHash !== argumentsHash ||
+        existing.expiresAt !== normalizedExpiresAt
+      ) {
+        throw new Error(
+          'Approval request identity conflict: an existing approval has different bound parameters.'
+        );
+      }
+
+      return parseApprovalRow(existing);
+    }
+
+    database.prepare(`
+      INSERT INTO approval_requests (
+        id,
+        task_id,
+        tool_action_id,
+        tool_name,
+        arguments,
+        arguments_hash,
+        status,
+        created_at,
+        expires_at,
+        resolved_at,
+        resolution_reason
+      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL, NULL)
+    `).run(
+      approvalId,
+      normalizedTaskId,
+      normalizedActionId,
+      normalizedToolName,
+      argumentsJson,
+      argumentsHash,
+      normalizedCreatedAt,
+      normalizedExpiresAt
+    );
+
+    return getApprovalRequest(approvalId);
+  }
+
+  function parseApprovalRow(row) {
+    if (!row) return null;
+
+    try {
+      row.args = JSON.parse(row.arguments);
+    } catch {
+      row.args = {};
+    }
+
+    delete row.arguments;
+    return row;
+  }
+
+  function getApprovalRequest(id) {
+    const row = database.prepare(`
+      SELECT id,
+             task_id AS taskId,
+             tool_action_id AS toolActionId,
+             tool_name AS toolName,
+             arguments,
+             arguments_hash AS argumentsHash,
+             status,
+             created_at AS createdAt,
+             expires_at AS expiresAt,
+             resolved_at AS resolvedAt,
+             resolution_reason AS resolutionReason
+      FROM approval_requests
+      WHERE id = ?
+      LIMIT 1
+    `).get(String(id));
+
+    return parseApprovalRow(row);
+  }
+
+  function resolveApprovalRequest(id, {
+    status,
+    resolvedAt = new Date().toISOString(),
+    resolutionReason = null
+  } = {}) {
+    if (status !== 'approved' && status !== 'denied') {
+      throw new Error(
+        `Invalid approval resolution status: "${status}".`
+      );
+    }
+
+    const approval = getApprovalRequest(id);
+
+    if (!approval) {
+      throw new Error('Approval request not found');
+    }
+
+    if (approval.status !== 'pending') {
+      throw new Error(
+        `Approval request is already resolved with status "${approval.status}".`
+      );
+    }
+
+    const expiresAt = Date.parse(approval.expiresAt);
+
+    if (!Number.isFinite(expiresAt)) {
+      throw new Error('Approval request has an invalid expiration timestamp');
+    }
+
+    if (Date.now() >= expiresAt) {
+      database.prepare(`
+        UPDATE approval_requests
+        SET status = 'expired',
+            resolved_at = ?,
+            resolution_reason = ?
+        WHERE id = ? AND status = 'pending'
+      `).run(
+        String(resolvedAt),
+        'Approval request expired before resolution.',
+        String(id)
+      );
+
+      return getApprovalRequest(id);
+    }
+
+    database.prepare(`
+      UPDATE approval_requests
+      SET status = ?,
+          resolved_at = ?,
+          resolution_reason = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(
+      String(status),
+      String(resolvedAt),
+      resolutionReason ? String(resolutionReason).slice(0, 500) : null,
+      String(id)
+    );
+
+    const resolved = getApprovalRequest(id);
+
+    if (!resolved || resolved.status !== status) {
+      throw new Error(
+        'Approval resolution failed or raced with another resolution'
+      );
+    }
+
+    return resolved;
+  }
+
   // ── Filesystem change evidence ──────────────────────────────────────────────
 
   /**
@@ -891,6 +1110,9 @@ export async function openStore(dataRoot) {
     recordToolAction,
     getToolAction,
     getCompletedToolAction,
+    createApprovalRequest,
+    getApprovalRequest,
+    resolveApprovalRequest,
     completeToolActionWithEvidence,
     getToolActionEvidence,
     getFileChangeEvidence,
