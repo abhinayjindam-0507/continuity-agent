@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 
 import { createToolBroker } from './tools/tool-broker.mjs';
 import { createFilesystemBroker } from './tools/filesystem-broker.mjs';
+import { buildChangeDiff } from './tools/change-diff.mjs';
 import { createOrchestrator } from './orchestrator/orchestrator.mjs';
 import { ollamaChat } from './providers/ollama.mjs';
 import {
@@ -19,7 +20,9 @@ import { createOrchestratorBridge } from './events/orchestrator-bridge.mjs';
 import { sanitizeTaskSnapshot } from './events/event-schema.mjs';
 
 const appRoot = resolve(process.cwd());
-const dataRoot = join(appRoot, '.continuity-agent');
+// DATA_ROOT is a server-configuration override (used by hermetic tests); the
+// default remains the application-local data directory.
+const dataRoot = resolve(process.env.DATA_ROOT || join(appRoot, '.continuity-agent'));
 const publicFile = join(appRoot, 'src', 'index.html');
 const port = Number(process.env.PORT || 4317);
 const projectRoot = resolve(process.env.PROJECT_ROOT || appRoot);
@@ -306,6 +309,23 @@ function respondToProjectPathError(response, error) {
   }
 
   return json(response, 500, { error: 'Project file request failed.' });
+}
+
+// Pure string validation for the read-only diff API's optional path filter.
+// It follows the filesystem broker's project-relative conventions WITHOUT any
+// filesystem access: evidence paths are matched exactly against persisted
+// rows, so a filter never resolves against the host filesystem.
+function isSafeRelativeProjectPath(value) {
+  if (typeof value !== 'string' || value === '') return false;
+  if (value.includes('\0')) return false;
+  if (value.startsWith('/') || value.startsWith('\\') || /^[a-zA-Z]:/.test(value)) {
+    return false;
+  }
+  const segments = value.split(/[\\/]/);
+  if (segments.some(segment => segment === '' || segment === '.' || segment === '..')) {
+    return false;
+  }
+  return !projectFilesystem.isSensitive(value, segments[segments.length - 1]);
 }
 
 const toolSpec = [
@@ -729,6 +749,68 @@ const server = createServer(async (request, response) => {
         });
       } catch (error) {
         return respondToProjectPathError(response, error);
+      }
+    }
+
+    // GET /api/project/changes?taskId=<id>&path=<relative-path>&limit=<n>
+    // Read-only Diff API: transforms durable file_change_evidence rows into a
+    // deterministic diff representation. The persisted evidence is the sole
+    // source of truth — this endpoint never reads the filesystem, executes
+    // tools, or mutates any state.
+    if (
+      request.method === 'GET' &&
+      url.pathname === '/api/project/changes'
+    ) {
+      const taskId = (url.searchParams.get('taskId') || '').trim();
+      if (!taskId) {
+        return json(response, 400, {
+          error: 'A taskId query parameter is required.'
+        });
+      }
+
+      const pathFilterRaw = url.searchParams.get('path');
+      let pathFilter = null;
+      if (pathFilterRaw !== null) {
+        if (!isSafeRelativeProjectPath(pathFilterRaw)) {
+          return json(response, 400, {
+            error:
+              'Invalid path filter: a non-empty project-relative path without traversal or sensitive segments is required.'
+          });
+        }
+        pathFilter = pathFilterRaw;
+      }
+
+      try {
+        const task = await store.getTask(taskId);
+        if (!task) {
+          return json(response, 404, { error: 'Task not found.' });
+        }
+
+        const result = store.getFileChangeEvidence({
+          taskId,
+          path: pathFilter,
+          limit: url.searchParams.get('limit')
+        });
+
+        return json(response, 200, {
+          ok: true,
+          taskId,
+          path: pathFilter,
+          limit: result.limit,
+          total: result.total,
+          count: result.changes.length,
+          truncated: result.truncated,
+          changes: result.changes.map(buildChangeDiff)
+        });
+      } catch (error) {
+        // Fail closed without leaking SQLite or filesystem internals.
+        console.error(
+          'Could not retrieve file change evidence:',
+          error?.message || error
+        );
+        return json(response, 500, {
+          error: 'Could not retrieve file changes.'
+        });
       }
     }
 

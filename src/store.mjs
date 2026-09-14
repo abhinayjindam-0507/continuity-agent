@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { assertTransition } from './task-state.mjs';
+import { clampBound } from './tools/filesystem-broker.mjs';
 
 const parseFile = async (file, fallback) => {
   try { return JSON.parse(await readFile(file, 'utf8')); } catch { return fallback; }
@@ -134,6 +135,27 @@ export function computeToolIdempotencyKey({ taskId, toolName, args = {} }) {
 }
 
 // ── Open store ───────────────────────────────────────────────────────────────
+
+// Safe bounds for read-only evidence listing (Diff API): fixed defaults and a
+// hard maximum that caller-provided limits can never exceed.
+export const DEFAULT_CHANGE_EVIDENCE_LIMIT = 50;
+export const MAX_CHANGE_EVIDENCE_LIMIT = 200;
+
+function parseEvidenceRow(row) {
+  try {
+    row.beforeState = row.beforeStateJson ? JSON.parse(row.beforeStateJson) : null;
+  } catch {
+    row.beforeState = null;
+  }
+  try {
+    row.afterState = row.afterStateJson ? JSON.parse(row.afterStateJson) : null;
+  } catch {
+    row.afterState = null;
+  }
+  delete row.beforeStateJson;
+  delete row.afterStateJson;
+  return row;
+}
 
 export async function openStore(dataRoot) {
   const database = new DatabaseSync(join(dataRoot, 'continuity-agent.sqlite'));
@@ -720,6 +742,59 @@ export async function openStore(dataRoot) {
     return row;
   }
 
+  // Read-only retrieval of file change evidence for the Diff API. Deterministic
+  // ordering (capture time, rowid tie-breaker), parameterized queries, and
+  // clamped caller limits so no caller input can bypass safe bounds. This
+  // helper never writes and never touches the filesystem.
+  function getFileChangeEvidence({ taskId, path = null, limit } = {}) {
+    if (typeof taskId !== 'string' || !taskId.trim()) {
+      throw new Error('taskId is required to retrieve file change evidence.');
+    }
+
+    let requestedLimit = limit;
+    if (typeof requestedLimit === 'string') {
+      const trimmed = requestedLimit.trim();
+      requestedLimit = trimmed === '' ? undefined : Number(trimmed);
+    }
+    const effectiveLimit = clampBound(
+      requestedLimit,
+      DEFAULT_CHANGE_EVIDENCE_LIMIT,
+      MAX_CHANGE_EVIDENCE_LIMIT,
+      1
+    );
+
+    const parameters = [String(taskId)];
+    let whereClause = 'WHERE task_id = ?';
+    if (path !== null && path !== undefined) {
+      whereClause += ' AND relative_path = ?';
+      parameters.push(String(path));
+    }
+
+    const rows = database.prepare(`
+      SELECT id, tool_action_id AS toolActionId, idempotency_key AS idempotencyKey,
+             task_id AS taskId, tool_name AS toolName, operation,
+             relative_path AS relativePath, evidence_version AS evidenceVersion,
+             before_state AS beforeStateJson, after_state AS afterStateJson,
+             before_hash AS beforeHash, after_hash AS afterHash,
+             captured_at AS capturedAt
+      FROM file_change_evidence
+      ${whereClause}
+      ORDER BY captured_at ASC, rowid ASC
+      LIMIT ?
+    `).all(...parameters, effectiveLimit);
+
+    const total = database.prepare(`
+      SELECT COUNT(*) AS count FROM file_change_evidence ${whereClause}
+    `).get(...parameters).count;
+
+    return {
+      limit: effectiveLimit,
+      total,
+      truncated: total > rows.length,
+      changes: rows.map(parseEvidenceRow)
+    };
+  }
+
   /**
    * Marks a tool action successful and persists its filesystem change evidence
    * in ONE transaction. Evidence can therefore never exist for a tool action
@@ -818,6 +893,7 @@ export async function openStore(dataRoot) {
     getCompletedToolAction,
     completeToolActionWithEvidence,
     getToolActionEvidence,
+    getFileChangeEvidence,
     recoverTask,
     getConfig,
     saveConfig,
