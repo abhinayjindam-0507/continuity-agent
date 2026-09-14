@@ -1,9 +1,3045 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Continuity Agent</title><style>
-:root{--bg:#090f18;--panel:#111b29;--line:#273649;--ink:#e9f0f8;--muted:#95a4b7;--dim:#68788c;--blue:#70b7ff;--mint:#68e4c3;--amber:#ffc06d}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(800px 500px at 92% -8%,#21497b77,transparent 62%),radial-gradient(700px 450px at -10% 105%,#17665b55,transparent 60%),var(--bg);font:14px/1.5 Inter,ui-sans-serif,system-ui,sans-serif}button,input,textarea{font:inherit}button{cursor:pointer}.app{max-width:1440px;min-height:100vh;margin:auto;padding:22px}.top{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding:2px 0 19px}.brand{display:flex;align-items:center;gap:11px;font-size:17px;font-weight:750;letter-spacing:-.025em}.logo{display:grid;place-items:center;width:33px;height:33px;border-radius:10px;border:1px solid #70b7ff88;background:#70b7ff1c;color:var(--mint);font-size:19px}.runtime{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted);font-size:12px}.dot{width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 4px #ffc06d18}.runtime.ready .dot{background:var(--mint);box-shadow:0 0 0 4px #68e4c318}.layout{display:grid;grid-template-columns:220px minmax(0,1fr) 310px;gap:18px;padding-top:20px}.left{display:flex;flex-direction:column;gap:4px}.label{margin:5px 10px;color:var(--dim);font-size:10px;font-weight:750;letter-spacing:.12em;text-transform:uppercase}.nav{border:1px solid transparent;border-radius:9px;background:none;color:var(--muted);padding:10px;text-align:left}.nav.active,.nav:hover{border-color:#70b7ff2e;background:#70b7ff12;color:var(--ink)}.nav b{float:right;color:var(--blue);font-size:11px}.foot{margin-top:auto;padding:14px;border:1px solid var(--line);border-radius:12px;background:#121d2be8}.foot b{display:block;margin-bottom:3px}.foot p{margin:0;color:var(--muted);font-size:12px}.hero{padding:4px 0 18px}.eyebrow{color:var(--mint);font-size:10px;font-weight:750;letter-spacing:.13em;text-transform:uppercase}.hero h1{margin:7px 0;font-size:clamp(30px,4vw,45px);line-height:1.04;letter-spacing:-.055em}.hero p{max-width:680px;margin:0;color:var(--muted);font-size:15px}.card{border:1px solid var(--line);border-radius:14px;background:linear-gradient(145deg,#141f2ef2,#0f1825f2);box-shadow:0 16px 44px #00000022}.composer{padding:19px}.head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.head h2{margin:0;font-size:14px}.hint{color:var(--dim);font-size:11px}textarea,input{width:100%;outline:none;border:1px solid #334459;border-radius:10px;color:var(--ink);background:#080e16a8;padding:11px}textarea:focus,input:focus{border-color:var(--blue);box-shadow:0 0 0 3px #70b7ff1c}textarea{min-height:108px;resize:vertical}textarea::placeholder,input::placeholder{color:#607188}.compose-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px}.safe{color:var(--muted);font-size:12px}.safe i{color:var(--mint);font-style:normal}.primary,.soft{border:0;border-radius:9px;padding:10px 14px;font-weight:700}.primary{color:#05151d;background:linear-gradient(115deg,var(--mint),#9edcff)}.soft{color:var(--muted);background:#91a5be13}.soft:hover{color:var(--ink);background:#91a5be22}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}.metric{padding:13px;border:1px solid var(--line);border-radius:11px;background:#07101a44}.metric span{display:block;color:var(--dim);font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase}.metric b{display:block;margin:4px 0 -2px;font-size:21px;letter-spacing:-.04em}.metric small{color:var(--muted);font-size:11px}.timeline-head{display:flex;justify-content:space-between;align-items:center;padding:15px 18px;border-bottom:1px solid var(--line)}.timeline-head h2{margin:0;font-size:14px}.tasks{padding:0 18px}.empty{padding:28px 0;color:var(--muted);text-align:center}.task{position:relative;padding:16px 0 17px 22px;border-bottom:1px solid var(--line)}.task:last-child{border:0}.task:before{content:"";position:absolute;left:0;top:22px;width:8px;height:8px;border:2px solid var(--blue);border-radius:50%;background:var(--panel)}.task.completed:before{background:var(--mint);border-color:var(--mint)}.task.paused:before,.task.needs_setup:before{border-color:var(--amber)}.task-top{display:flex;justify-content:space-between;gap:12px}.task h3{margin:0;font-size:14px}.task p{margin:4px 0;color:var(--muted)}.pill{height:max-content;padding:3px 7px;border:1px solid var(--line);border-radius:99px;color:var(--muted);font-size:10px;text-transform:capitalize}.pill.completed{color:var(--mint);border-color:#68e4c344}.pill.paused,.pill.needs_setup{color:var(--amber);border-color:#ffc06d44}.meta{display:flex;flex-wrap:wrap;gap:11px;color:var(--dim);font-size:11px}.meta b{color:#c6d3e1}.activity{margin-top:9px}.activity summary{color:var(--blue);font-size:12px;cursor:pointer}.activity pre{max-height:150px;overflow:auto;margin:8px 0 0;padding:9px;border-radius:8px;background:#080d15;color:#afbdce;font:11px/1.45 ui-monospace,monospace;white-space:pre-wrap}.continue{margin-top:10px;padding:7px 10px;font-size:12px}.right{display:flex;flex-direction:column;gap:13px}.right .card{padding:16px}.status{display:flex;gap:10px}.glyph{display:grid;place-items:center;flex:0 0 auto;width:30px;height:30px;border-radius:9px;background:#ffc06d18;color:var(--amber)}.online .glyph{background:#68e4c318;color:var(--mint)}.status b{display:block}.status p{margin:1px 0 0;color:var(--muted);font-size:12px}.models{display:grid;gap:7px;margin-top:13px}.model{display:flex;justify-content:space-between;padding:7px 8px;border:1px solid var(--line);border-radius:8px;color:#c5d2df;font-size:12px}.model em{color:var(--mint);font-style:normal;font-size:10px}.setting{margin-top:12px}.setting label{display:block;margin-bottom:5px;color:var(--muted);font-size:11px;font-weight:650}.setting input{padding:9px 10px;font-size:12px}.save{width:100%;margin-top:12px}.rules{display:grid;gap:10px}.rule{display:flex;gap:9px}.rule span{color:var(--mint)}.rule p{margin:0;color:var(--muted);font-size:12px}.rule b{color:#c8d5e2}@media(max-width:1080px){.layout{grid-template-columns:190px minmax(0,1fr)}.right{grid-column:2;display:grid;grid-template-columns:1fr 1fr}.right .card:last-child{grid-column:1/-1}}@media(max-width:700px){.app{padding:15px}.layout{grid-template-columns:1fr}.left{display:none}.right{grid-column:auto;display:flex}.metrics{grid-template-columns:1fr 1fr}.compose-foot{align-items:flex-start;flex-direction:column}.top{gap:10px}.runtime{font-size:10px}}
-</style></head><body><div class="app"><header class="top"><div class="brand"><span class="logo">↻</span>Continuity Agent</div><div id="health" class="runtime"><i class="dot"></i><span>Checking local runtime</span></div></header><div class="layout"><nav class="left"><div class="label">Workspace</div><button class="nav active">Command center <b>01</b></button><button class="nav">Task archive <b id="taskCount">00</b></button><button class="nav">Checkpoints <b id="checkpointCount">00</b></button><div class="label">Control plane</div><button class="nav">Model policy</button><button class="nav">Safety boundary</button><div class="foot"><b>Continuity, not magic.</b><p>Every completed action is recorded before work continues.</p></div></nav><main><section class="hero"><div class="eyebrow">Resilient by design</div><h1>Keep software work moving.</h1><p>Direct a local agent, see what it knows, and recover from interruption without losing project state.</p></section><section class="card composer"><div class="head"><h2>New engineering task</h2><span class="hint">Local model required</span></div><textarea id="goal" placeholder="Describe the outcome, constraints, and how success should be verified…"></textarea><div class="compose-foot"><div class="safe"><i>◆</i> Project-scoped tools · no cloud provider enabled</div><button id="start" class="primary">Start protected run →</button></div></section><section class="metrics"><div class="metric"><span>Active work</span><b id="activeCount">0</b><small>Tasks running now</small></div><div class="metric"><span>Recovery points</span><b id="checkpointMetric">0</b><small>Durable checkpoints</small></div><div class="metric"><span>Model handoffs</span><b id="switchMetric">0</b><small>Automatic switches</small></div></section><section class="card"><div class="timeline-head"><h2>Work timeline</h2><button id="refresh" class="soft">Refresh state</button></div><div id="tasks" class="tasks"><p class="empty">No tasks yet. Start with a small, testable outcome.</p></div></section></main><aside class="right"><section id="runtimeCard" class="card"><div class="status"><div class="glyph">◌</div><div><b id="runtimeTitle">Local runtime</b><p id="runtimeDetail">Looking for Ollama on this device</p></div></div><div id="modelList" class="models"><div class="model">No models detected <em>waiting</em></div></div></section><section class="card"><div class="head"><h2>Fallback policy</h2><span class="hint">Local only</span></div><div class="setting"><label for="preferred">Preferred installed model</label><input id="preferred" placeholder="e.g. qwen3-coder:latest"></div><div class="setting"><label for="fallbacks">Fallback order</label><input id="fallbacks" placeholder="comma-separated local models"></div><button id="save" class="soft save">Save local policy</button></section><section class="card"><div class="head"><h2>Safety boundary</h2><span class="hint">Enforced</span></div><div class="rules"><div class="rule"><span>◇</span><p><b>Project only</b><br>File access cannot leave this workspace.</p></div><div class="rule"><span>◇</span><p><b>No shell shortcuts</b><br>Only allowlisted commands may run.</p></div><div class="rule"><span>◇</span><p><b>Checkpoint first</b><br>Every tool result is saved before continuation.</p></div></div></section></aside></div></div><script>
-const api=(p,o={})=>fetch(p,{headers:{'content-type':'application/json'},...o}).then(async r=>{let x=await r.json();if(!r.ok)throw Error(x.error);return x}),esc=s=>String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));let state=[];const put=(s,x)=>document.querySelector(s).textContent=x;
-function render(){let cp=state.reduce((a,t)=>a+t.checkpoints.length,0),sw=state.reduce((a,t)=>a+t.switches.length,0);put('#taskCount',String(state.length).padStart(2,'0'));put('#checkpointCount',String(cp).padStart(2,'0'));put('#activeCount',state.filter(t=>t.status==='running').length);put('#checkpointMetric',cp);put('#switchMetric',sw);tasks.innerHTML=state.length?state.map(t=>`<article class="task ${esc(t.status)}"><div class="task-top"><div><h3>${esc(t.goal)}</h3><p>${esc(t.message)}</p></div><span class="pill ${esc(t.status)}">${esc(t.status.replace('_',' '))}</span></div><div class="meta"><span>Model <b>${esc(t.activeModel||'not selected')}</b></span><span><b>${t.checkpoints.length}</b> checkpoints</span><span><b>${t.switches.length}</b> handoffs</span></div>${t.steps.length?`<details class="activity"><summary>Inspect recent activity · ${t.steps.length} events</summary><pre>${esc(t.steps.slice(-8).map(x=>`${x.kind}: ${x.name||x.model||''}\n${x.detail||''}`).join('\n\n'))}</pre></details>`:''}${/paused|needs_setup/.test(t.status)?`<button class="soft continue" onclick="resume('${t.id}')">Continue from checkpoint →</button>`:''}</article>`).join(''):'<p class="empty">No tasks yet. Start with a small, testable outcome.</p>'}
-function runtime(h){health.querySelector('span').textContent=h.reachable?`Local runtime ready · ${h.models.length} model${h.models.length===1?'':'s'}`:'Local runtime not detected';health.classList.toggle('ready',h.reachable);runtimeCard.classList.toggle('online',h.reachable);runtimeTitle.textContent=h.reachable?'Ollama is ready':'Ollama is offline';runtimeDetail.textContent=h.reachable?'Installed models are eligible for your local policy.':'No paid provider will be used. Start a local runtime to run tasks.';modelList.innerHTML=h.models.length?h.models.map((m,i)=>`<div class="model">${esc(m)}<em>${i?'fallback-ready':'available'}</em></div>`).join(''):'<div class="model">No models detected <em>waiting</em></div>'}
-async function load(){state=await api('/api/tasks');render();let[c,h]=await Promise.all([api('/api/config'),api('/api/health')]);preferred.value=c.preferredModel||'';fallbacks.value=(c.fallbacks||[]).join(', ');runtime(h)}async function resume(id){await api('/api/tasks/'+id+'/continue',{method:'POST'});load()}start.onclick=async()=>{if(!goal.value.trim())return goal.focus();start.disabled=true;start.textContent='Creating checkpoint…';try{await api('/api/tasks',{method:'POST',body:JSON.stringify({goal:goal.value})});goal.value='';await load()}finally{start.disabled=false;start.textContent='Start protected run →'}};save.onclick=async()=>{await api('/api/config',{method:'PUT',body:JSON.stringify({preferredModel:preferred.value.trim(),fallbacks:fallbacks.value.split(',').map(x=>x.trim()).filter(Boolean)})});save.textContent='Policy saved';setTimeout(()=>save.textContent='Save local policy',700);load()};refresh.onclick=load;new EventSource('/events').addEventListener('task',e=>{let x=JSON.parse(e.data),i=state.findIndex(t=>t.id===x.id);i<0?state.unshift(x):state[i]=x;render()});load();
-</script><style>.logo{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,#70b7ff24,#68e4c312);box-shadow:inset 0 1px #fff2}.logo svg{width:27px;height:27px;overflow:visible}</style><script>document.querySelector('.logo').innerHTML='<svg viewBox="0 0 32 32" role="img" aria-label="Continuity relay logo"><defs><linearGradient id="relay" x1="4" y1="3" x2="28" y2="29" gradientUnits="userSpaceOnUse"><stop stop-color="#8dd3ff"/><stop offset="1" stop-color="#62e5c2"/></linearGradient></defs><path d="M9.1 8.5A10.3 10.3 0 0 1 24.8 12" fill="none" stroke="url(#relay)" stroke-linecap="round" stroke-width="3.2"/><path d="M22.9 23.5A10.3 10.3 0 0 1 7.2 20" fill="none" stroke="url(#relay)" stroke-linecap="round" stroke-width="3.2"/><path d="m23.8 7.1 1.2 5.6-5.6-1.2" fill="none" stroke="#8dd3ff" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.35"/><path d="m8.2 24.9-1.2-5.6 5.6 1.2" fill="none" stroke="#62e5c2" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.35"/><path d="M16 12.2 19.3 16 16 19.8 12.7 16 16 12.2Z" fill="#0d1c29" stroke="#d6f6ee" stroke-linejoin="round" stroke-width="1.25"/></svg>';</script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Continuity Agent — AI Engineering Workspace</title>
+  <style>
+    :root {
+      /* Peaceful Dark Palette — Obsidian, Slate, Muted Emerald, Calm Cyan */
+      --bg-desktop: #070a10;
+      --bg-frame: #0b0f19;
+      --bg-sidebar: #090d16;
+      --bg-subsidebar: #0a0e18;
+      --bg-stage: #080c15;
+      --bg-editor: #070b13;
+      --bg-panel: #0a0f1a;
+      --bg-card: #0e1524;
+      --bg-card-hover: #131c30;
+      --bg-card-active: #17233c;
+      --bg-input: #060911;
+      --bg-terminal: #04070d;
+
+      --border-subtle: #141d2e;
+      --border-medium: #1b263b;
+      --border-bright: #273652;
+      --border-active: #38bdf8;
+
+      --text-main: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --text-dim: #475569;
+
+      /* Peaceful Accents */
+      --cyan-soft: #38bdf8;
+      --cyan-glow: #00f0ff;
+      --cyan-bg: rgba(56, 189, 248, 0.12);
+      --cyan-border: rgba(56, 189, 248, 0.32);
+
+      --emerald-soft: #34d399;
+      --emerald-deep: #10b981;
+      --emerald-bg: rgba(16, 185, 129, 0.12);
+      --emerald-border: rgba(16, 185, 129, 0.3);
+
+      --amber-soft: #fbbf24;
+      --amber-deep: #f59e0b;
+      --amber-bg: rgba(245, 158, 11, 0.12);
+      --amber-border: rgba(245, 158, 11, 0.3);
+
+      --rose-soft: #f87171;
+      --rose-deep: #ef4444;
+      --rose-bg: rgba(239, 68, 68, 0.12);
+      --rose-border: rgba(239, 68, 68, 0.3);
+
+      --indigo-soft: #818cf8;
+      --indigo-bg: rgba(129, 140, 248, 0.12);
+
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg-desktop);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      font-size: 12px;
+      line-height: 1.45;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input, textarea {
+      font-family: inherit;
+      font-size: inherit;
+      color: inherit;
+    }
+    button { cursor: pointer; border: none; background: transparent; }
+
+    /* ==========================================================================
+       SHARED TOP WINDOW CHROME (Header Bar)
+       ========================================================================== */
+    .window-header {
+      height: 42px;
+      background: var(--bg-frame);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      flex-shrink: 0;
+      z-index: 50;
+    }
+
+    .window-header-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .nav-arrow-group {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      color: var(--text-dim);
+    }
+    .btn-nav-arrow {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      color: var(--text-muted);
+      transition: all 0.12s;
+    }
+    .btn-nav-arrow:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-main);
+    }
+
+    .brand-mark {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer;
+    }
+    .brand-icon {
+      color: var(--emerald-soft);
+      display: flex;
+      align-items: center;
+    }
+    .brand-title {
+      font-weight: 800;
+      font-size: 13px;
+      letter-spacing: 0.06em;
+      color: #ffffff;
+    }
+    .brand-pill {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: rgba(16, 185, 129, 0.16);
+      color: var(--emerald-soft);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+    }
+
+    /* Header Context in View 2: Workspace Breadcrumb */
+    .header-breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-medium);
+      border-radius: 6px;
+      padding: 3px 9px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .header-breadcrumb .repo-tag {
+      color: var(--text-main);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .header-breadcrumb .file-path {
+      color: var(--cyan-soft);
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    /* Header Center: View 1 Hero Session Button */
+    .window-header-center {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .hero-session-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 20px;
+      padding: 3px 11px;
+      font-size: 11px;
+      color: var(--emerald-soft);
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .hero-session-btn:hover {
+      background: rgba(16, 185, 129, 0.2);
+    }
+
+    /* Header View 2 Runtime & Checkpoint Badge */
+    .workspace-runtime-badge {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(14, 20, 32, 0.8);
+      border: 1px solid var(--border-medium);
+      border-radius: 20px;
+      padding: 3px 12px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .workspace-runtime-badge .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--emerald-soft);
+      box-shadow: 0 0 5px var(--emerald-soft);
+    }
+    .checkpoint-header-pill {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      padding: 3px 9px;
+      border-radius: 6px;
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      color: var(--emerald-soft);
+      font-family: var(--font-mono);
+    }
+
+    .window-header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Model Fleet Pill (Opens Context & Token Headroom in View 1) */
+    .model-fleet-btn {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(14, 20, 32, 0.8);
+      border: 1px solid var(--border-medium);
+      border-radius: 20px;
+      padding: 3px 11px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .model-fleet-btn:hover {
+      background: rgba(20, 30, 48, 0.9);
+      border-color: var(--border-bright);
+    }
+    .mesh-tag {
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--cyan-soft);
+      background: var(--cyan-bg);
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    /* SSE Stream Status (Contract Requirement: id="streamStatus") */
+    .stream-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .stream-status .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--amber-soft);
+    }
+    .stream-status.connected .dot {
+      background: var(--emerald-soft);
+      box-shadow: 0 0 5px var(--emerald-soft);
+    }
+    .stream-status.reconnecting .dot {
+      background: var(--amber-soft);
+      animation: blink 1.2s infinite;
+    }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .header-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      border: 1px solid transparent;
+      transition: all 0.12s;
+    }
+    .header-btn:hover {
+      background: var(--bg-card);
+      color: var(--text-main);
+      border-color: var(--border-medium);
+    }
+    #btnHeaderViewToggle {
+      width: auto;
+      min-width: 80px;
+      padding: 0 11px;
+      white-space: nowrap;
+      height: 26px;
+      border: 1px solid var(--border-bright);
+      background: rgba(255, 255, 255, 0.04);
+      gap: 5px;
+    }
+    #btnHeaderViewToggle:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: var(--cyan-soft);
+    }
+    #btnReturnHomeWorkspace {
+      width: auto;
+      padding: 0 10px;
+      white-space: nowrap;
+      height: 24px;
+      border: 1px solid rgba(52, 211, 153, 0.35);
+      background: rgba(16, 185, 129, 0.08);
+      display: inline-flex;
+      align-items: center;
+    }
+    #btnReturnHomeWorkspace:hover {
+      background: rgba(16, 185, 129, 0.18);
+      border-color: var(--emerald-soft);
+    }
+
+    /* ==========================================================================
+       MAIN WRAPPER (Contract Requirement: id="appBody")
+       ========================================================================== */
+    .app-body {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* ==========================================================================
+       VIEW 1: HOME PAGE (Terminal Dashboard & Session Launcher)
+       ========================================================================== */
+    .view-home {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      overflow: hidden;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Left Sidebar in View 1 */
+    .home-sidebar {
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .home-sidebar-top {
+      padding: 12px 10px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .btn-new-session {
+      width: 100%;
+      padding: 8px 12px;
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text-main);
+      font-weight: 600;
+      font-size: 11.5px;
+      transition: all 0.12s;
+    }
+    .btn-new-session:hover {
+      background: rgba(16, 185, 129, 0.16);
+      border-color: rgba(16, 185, 129, 0.5);
+    }
+    .btn-new-session .btn-left {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--emerald-soft);
+    }
+    .btn-new-session .kbd-badge {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    .home-search-box {
+      position: relative;
+    }
+    .home-search-input {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--border-medium);
+      border-radius: 6px;
+      padding: 6px 10px 6px 28px;
+      font-size: 11px;
+      color: var(--text-main);
+      outline: none;
+    }
+    .home-search-input:focus { border-color: var(--cyan-soft); }
+    .home-search-box svg {
+      position: absolute;
+      left: 9px;
+      top: 7px;
+      color: var(--text-dim);
+    }
+
+    .home-sidebar-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 10px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .section-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+
+    .nav-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .nav-list-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 9px;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 11.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .nav-list-item:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-main);
+    }
+    .nav-list-item.active {
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--emerald-soft);
+      font-weight: 600;
+    }
+    .nav-list-item.clickable-target {
+      border: 1px dashed transparent;
+    }
+    .nav-list-item.clickable-target:hover {
+      border-color: var(--cyan-soft);
+      color: var(--cyan-soft);
+    }
+    .nav-list-item .nav-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .nav-list-item svg { width: 13px; height: 13px; }
+
+    .tag-badge {
+      font-size: 9.5px;
+      font-family: var(--font-mono);
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+    .tag-badge.mod { background: rgba(56, 189, 248, 0.15); color: var(--cyan-soft); }
+    .tag-badge.live { background: rgba(16, 185, 129, 0.15); color: var(--emerald-soft); }
+    .tag-badge.zsh { background: rgba(255, 255, 255, 0.06); color: var(--text-muted); }
+
+    /* Repositories Tree in View 1 */
+    .repo-tree {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+    .repo-node {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 3px 7px;
+      border-radius: 4px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .repo-node:hover { background: rgba(255, 255, 255, 0.04); color: var(--text-main); }
+    .repo-node.highlight-target {
+      border: 1px dashed var(--cyan-soft);
+      background: rgba(56, 189, 248, 0.08);
+      color: var(--cyan-soft);
+      font-weight: 600;
+    }
+
+    /* Home Sidebar Footer */
+    .home-sidebar-foot {
+      padding: 10px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.15);
+    }
+    .spine-stat-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10.5px;
+      color: var(--text-muted);
+    }
+    .spine-stat-row strong { color: var(--emerald-soft); font-family: var(--font-mono); }
+    .btn-sync {
+      width: 100%;
+      padding: 6px;
+      border-radius: 5px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-medium);
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.12s;
+    }
+    .btn-sync:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+    }
+    .user-card-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 4px;
+    }
+    .user-details {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .user-circle {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: rgba(16, 185, 129, 0.2);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: var(--emerald-soft);
+      font-weight: 700;
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Home Center Stage in View 1 */
+    .home-center {
+      background: var(--bg-stage);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .home-subcontext-bar {
+      padding: 10px 18px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 11px;
+      background: rgba(10, 15, 24, 0.4);
+    }
+    .subcontext-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .subcontext-tab:hover { color: var(--text-main); }
+    .subcontext-tab.active { color: var(--emerald-soft); font-weight: 600; }
+    .subcontext-tab.jump-to-workspace {
+      color: var(--cyan-soft);
+      font-weight: 600;
+    }
+
+    /* Home Top Half: Launcher */
+    .home-launcher {
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      max-height: 52%;
+      flex-shrink: 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .home-composer-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-bright);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+    .home-composer-input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      outline: none;
+      font-size: 12.5px;
+      color: var(--text-main);
+      line-height: 1.5;
+      resize: none;
+      min-height: 48px;
+    }
+    .home-composer-input::placeholder { color: var(--text-muted); }
+    .home-composer-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .composer-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--cyan-soft);
+      background: var(--cyan-bg);
+      border: 1px solid var(--cyan-border);
+      border-radius: 20px;
+      padding: 3px 9px;
+      cursor: pointer;
+    }
+
+    /* PRIMARY RESUME CHECKPOINT BUTTON ON HOME (Contract Requirement: id="btnResume") */
+    .home-resume-row {
+      display: flex;
+      justify-content: center;
+    }
+    .btn-home-resume {
+      background: #f8fafc;
+      color: #0b111e;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 9px 24px;
+      border-radius: 30px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 4px 14px rgba(255, 255, 255, 0.14);
+      transition: all 0.15s ease;
+      cursor: pointer;
+      border: 1px dashed var(--cyan-soft);
+    }
+    .btn-home-resume:hover {
+      background: #ffffff;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(56, 189, 248, 0.25);
+    }
+
+    /* Quick Action Cards Grid */
+    .home-actions-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    .home-action-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-medium);
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      transition: all 0.12s;
+    }
+    .home-action-card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-bright);
+    }
+    .home-action-card.jump-target:hover {
+      border-color: var(--cyan-soft);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.15);
+    }
+    .action-icon-glyph { font-size: 14px; margin-top: 1px; }
+
+    /* Lower Half: Integrated Terminal in View 1 */
+    .home-terminal-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-terminal);
+      overflow: hidden;
+    }
+    .terminal-tab-bar {
+      height: 32px;
+      background: var(--bg-sidebar);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      user-select: none;
+    }
+    .term-tab-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .term-tab-pill {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+    }
+    .term-tab-pill.active {
+      color: var(--cyan-soft);
+      font-weight: 600;
+    }
+    .term-tab-pill .dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--cyan-soft);
+    }
+
+    .term-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 14px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.65;
+      color: #94a3b8;
+    }
+    .prompt-row {
+      color: #60a5fa;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .prompt-row .h { color: #38bdf8; }
+    .prompt-row .d { color: #a78bfa; }
+    .prompt-row .c { color: #f8fafc; font-weight: 600; }
+    .history-restored {
+      color: var(--text-dim);
+      font-size: 10px;
+      margin-bottom: 4px;
+    }
+
+    /* Floating Context & Token Headroom Card */
+    .headroom-popup {
+      position: absolute;
+      top: 52px;
+      right: 24px;
+      width: 330px;
+      background: #0d1525;
+      border: 1px solid var(--border-bright);
+      border-radius: 10px;
+      padding: 14px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+      z-index: 60;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .headroom-title {
+      font-size: 10.5px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+    }
+    .headroom-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+      font-size: 10.5px;
+      color: var(--text-secondary);
+      background: rgba(0,0,0,0.25);
+      padding: 6px 8px;
+      border-radius: 6px;
+    }
+    .fleet-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 8px;
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--border-subtle);
+      border-radius: 5px;
+      font-size: 11px;
+    }
+    .fleet-tag {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+    .fleet-tag.active { background: var(--emerald-bg); color: var(--emerald-soft); }
+    .fleet-tag.loaded { background: var(--cyan-bg); color: var(--cyan-soft); }
+    .fleet-tag.standby { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
+
+    .headroom-menu {
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .headroom-menu-btn {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      padding: 4px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .headroom-menu-btn:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--cyan-soft);
+    }
+
+    /* ==========================================================================
+       VIEW 2: WORKSPACE (Pic 2: 4-Column Active Engineering Workspace)
+       ========================================================================== */
+    .view-workspace {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 184px 260px minmax(0, 1fr) 350px;
+      overflow: hidden;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Col 1: Project Rail */
+    .col-rail {
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .rail-top {
+      height: 36px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .rail-links {
+      flex: 1;
+      padding: 8px 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      overflow-y: auto;
+    }
+    .rail-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 10px;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 11.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .rail-link:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-main);
+    }
+    .rail-link.active {
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--cyan-soft);
+      font-weight: 600;
+    }
+    .rail-foot {
+      padding: 12px;
+      border-top: 1px solid var(--border-subtle);
+      background: rgba(0, 0, 0, 0.15);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .swarm-badge {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--emerald-soft);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .ctx-bar {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .ctx-fill {
+      height: 100%;
+      width: 75%;
+      background: linear-gradient(90deg, var(--cyan-soft), var(--indigo-soft));
+    }
+
+    /* Col 2: Sub-Sidebar (Tasks, Continuity Spine, Files) */
+    .col-sub {
+      background: var(--bg-subsidebar);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sub-tabs {
+      height: 36px;
+      display: flex;
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 0 8px;
+      align-items: center;
+      gap: 4px;
+    }
+    .sub-tab {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+    .sub-tab.active {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--cyan-soft);
+      border: 1px solid var(--border-medium);
+    }
+    .sub-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* ACTIVE AGENT TASKS (Contract Requirement: id="taskList") */
+    .task-container-box {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .active-task-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-medium);
+      border-radius: 8px;
+      padding: 9px 11px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      transition: all 0.12s;
+    }
+    .active-task-card.active {
+      background: var(--bg-card-active);
+      border-color: rgba(56, 189, 248, 0.4);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.08);
+    }
+    .active-task-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .active-task-title {
+      font-weight: 600;
+      font-size: 11.5px;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.running { background: var(--cyan-soft); box-shadow: 0 0 5px var(--cyan-soft); }
+    .status-dot.paused { background: var(--amber-soft); }
+    .status-dot.completed { background: var(--emerald-soft); }
+    .status-dot.failed { background: var(--rose-soft); }
+
+    /* CONTINUITY SPINE (Contract Requirement: id="checkpointLedgerList") */
+    .spine-tree {
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      padding-left: 14px;
+      margin-left: 6px;
+    }
+    .spine-tree::before {
+      content: "";
+      position: absolute;
+      left: 3px;
+      top: 6px;
+      bottom: 6px;
+      width: 2px;
+      background: var(--border-medium);
+    }
+    .spine-step-node {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-bottom: 12px;
+      cursor: pointer;
+    }
+    .spine-step-node::before {
+      content: "";
+      position: absolute;
+      left: -15px;
+      top: 4px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      border: 2px solid var(--bg-subsidebar);
+    }
+    .spine-step-node.active::before {
+      background: var(--cyan-soft);
+      box-shadow: 0 0 6px var(--cyan-soft);
+    }
+    .spine-node-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 7px 9px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .spine-step-node.active .spine-node-card {
+      background: var(--bg-card-active);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+
+    /* Col 3: Central Code & Diff Workspace */
+    .col-editor {
+      background: var(--bg-editor);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+    .editor-tabs-bar {
+      height: 36px;
+      background: var(--bg-sidebar);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px;
+    }
+    .editor-sub-bar {
+      height: 34px;
+      background: rgba(14, 20, 32, 0.5);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+    }
+    .pulsing-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--cyan-soft);
+      box-shadow: 0 0 6px var(--cyan-soft);
+      animation: pulse 1.4s infinite ease-in-out;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .diff-code-area {
+      flex: 1;
+      overflow-y: auto;
+      background: var(--bg-editor);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.7;
+      padding: 12px 0;
+    }
+    .diff-line {
+      display: flex;
+      padding: 0 16px;
+      min-height: 20px;
+    }
+    .diff-ln {
+      width: 44px;
+      color: var(--text-dim);
+      text-align: right;
+      padding-right: 18px;
+      user-select: none;
+      font-size: 11px;
+    }
+    .diff-code { flex: 1; white-space: pre; color: #cbd5e1; }
+    .diff-del {
+      background: rgba(239, 68, 68, 0.12);
+      border-left: 3px solid var(--rose-deep);
+      color: var(--rose-soft);
+    }
+    .diff-add {
+      background: rgba(16, 185, 129, 0.12);
+      border-left: 3px solid var(--emerald-deep);
+      color: var(--emerald-soft);
+    }
+
+    /* Floating tooltips in diff */
+    .diff-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      margin-left: 12px;
+      vertical-align: middle;
+    }
+    .diff-badge.del {
+      background: rgba(239, 68, 68, 0.2);
+      color: var(--rose-soft);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+    }
+    .diff-badge.add {
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--cyan-soft);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+    }
+
+    /* Floating callout */
+    .agent-callout {
+      margin: 8px 16px 8px 60px;
+      padding: 7px 12px;
+      border-radius: 6px;
+      background: rgba(14, 26, 44, 0.95);
+      border: 1px solid var(--cyan-border);
+      color: var(--cyan-soft);
+      font-size: 11px;
+      font-family: var(--font-sans);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+
+    /* Col 4: Right Agent Execution Engine */
+    .col-engine {
+      background: var(--bg-panel);
+      border-left: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .engine-head {
+      padding: 12px 14px 10px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .engine-btn-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-exec-ctrl {
+      flex: 1;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-medium);
+      color: var(--text-secondary);
+      transition: all 0.12s;
+    }
+    .btn-exec-ctrl:hover {
+      background: var(--bg-card-hover);
+      color: var(--text-main);
+      border-color: var(--border-bright);
+    }
+    .btn-exec-ctrl.pause:hover {
+      background: var(--amber-bg);
+      color: var(--amber-soft);
+      border-color: var(--amber-border);
+    }
+    .btn-exec-ctrl.resume {
+      background: var(--emerald-bg);
+      color: var(--emerald-soft);
+      border-color: var(--emerald-border);
+    }
+
+    /* Model Handoff Notice Banner (Contract Requirement: id="handoffBanner") */
+    .handoff-banner {
+      margin: 10px 14px 0;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, rgba(129,140,248,0.15), rgba(56,189,248,0.08));
+      border: 1px solid rgba(129,140,248,0.35);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .engine-scroll-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* Card 1: Approval Required (Stitch Action Card) */
+    .approval-box {
+      background: linear-gradient(145deg, #10192a, #0b111e);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .approval-pill {
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(56, 189, 248, 0.16);
+      color: var(--cyan-soft);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      text-transform: uppercase;
+    }
+    .btn-approve-primary {
+      flex: 1.4;
+      padding: 6px 10px;
+      border-radius: 5px;
+      background: var(--cyan-soft);
+      color: #04121d;
+      font-weight: 700;
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    /* Card 2: Active Tool Runner */
+    .tool-runner-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-medium);
+      border-radius: 8px;
+      padding: 11px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    /* Card 3: Autonomous Plan (Contract Requirement: id="timelineList") */
+    .plan-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-medium);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .plan-step-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      font-size: 11.5px;
+      line-height: 1.35;
+    }
+    .step-ico {
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+      font-size: 10px;
+    }
+    .step-ico.done {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--emerald-soft);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .step-ico.active {
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--cyan-soft);
+      border: 1.5px solid var(--cyan-soft);
+      box-shadow: 0 0 6px var(--cyan-soft);
+    }
+    .step-ico.pending {
+      border: 1px solid var(--text-dim);
+      color: transparent;
+    }
+
+    /* Integrated Activity Stream Console (Contract Requirement: id="bottomConsole") */
+    .workspace-bottom-console {
+      height: 140px;
+      background: var(--bg-terminal);
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .console-bar {
+      height: 30px;
+      background: var(--bg-sidebar);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .console-logs-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.6;
+      color: #94a3b8;
+    }
+
+    /* ==========================================================================
+       SHARED BOTTOM STATUS BAR
+       ========================================================================== */
+    .window-footer-bar {
+      height: 28px;
+      background: var(--bg-frame);
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+      user-select: none;
+      z-index: 50;
+    }
+    .foot-left, .foot-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .foot-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .foot-item.active {
+      color: var(--emerald-soft);
+      font-weight: 600;
+    }
+    .foot-item.term-pill {
+      background: var(--cyan-bg);
+      color: var(--cyan-soft);
+      border: 1px solid var(--cyan-border);
+      padding: 1px 7px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+  <!-- ========================================================================
+       TOP WINDOW HEADER CHROME
+       ======================================================================== -->
+  <header class="window-header">
+    <div class="window-header-left">
+      <!-- Stitch Brand Mark (Clicking returns to Home) -->
+      <div class="brand-mark" id="brandMarkHome" title="Return to Home">
+        <span class="brand-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" width="22" height="22" style="display: block; border-radius: 5px;">
+            <rect width="48" height="48" rx="10" fill="#10131A"/>
+            <rect x="0.5" y="0.5" width="47" height="47" rx="9.5" stroke="#00F5A0" stroke-opacity="0.25"/>
+            <!-- Continuous looping dual infinity node path representing continuity and checkpoints -->
+            <path d="M14 24C14 19.5817 17.5817 16 22 16C25.5 16 27.5 18.5 29.5 21.5L34 28C36 31 38.5 32 41 32" stroke="#1E2330" stroke-width="3" stroke-linecap="round"/>
+            <path d="M13 24C13 18.4772 17.4772 14 23 14C27 14 29.5 16.5 31.5 19.5L34.5 24" stroke="url(#contGrad)" stroke-width="3.5" stroke-linecap="round"/>
+            <path d="M35 24L32 28.5C30 31.5 27.5 34 23 34C17.4772 34 13 29.5228 13 24" stroke="url(#contGrad)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="0.5 4"/>
+            <circle cx="13" cy="24" r="3.5" fill="#00F5A0"/>
+            <circle cx="13" cy="24" r="6" stroke="#00F5A0" stroke-opacity="0.3" stroke-width="1.5"/>
+            <circle cx="27" cy="24" r="2.5" fill="#00D8C6"/>
+            <circle cx="35" cy="24" r="3.5" fill="#00F5A0"/>
+            <path d="M33 16L39 24L33 32" stroke="#00F5A0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <defs>
+              <linearGradient id="contGrad" x1="13" y1="14" x2="39" y2="34" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#00F5A0"/>
+                <stop offset="0.6" stop-color="#00D8C6"/>
+                <stop offset="1" stop-color="#38BDF8"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </span>
+        <span class="brand-title">CONTINUITY</span>
+        <span class="brand-pill">AGENT</span>
+      </div>
+
+      <div class="nav-arrow-group">
+        <button class="btn-nav-arrow" id="btnNavBack" title="Back to Dashboard">&lt;</button>
+        <button class="btn-nav-arrow" id="btnNavForward" title="Forward to Workspace">&gt;</button>
+      </div>
+
+      <!-- View 2 Context Breadcrumb (Visible in Workspace) -->
+      <div class="header-breadcrumb" id="headerBreadcrumb" style="display: none;">
+        <span class="repo-tag">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+          continuity-agent (main)
+        </span>
+        <span style="color: var(--text-muted);">&gt;</span>
+        <span class="file-path">src / broker / filesystem_broker.ts</span>
+      </div>
+    </div>
+
+    <!-- Center: View 1 Hero Session Button OR View 2 Model Pill -->
+    <div class="window-header-center">
+      <div class="hero-session-btn" id="btnHeroSessionCenter" title="Active Session Context">
+        <span>⚡ Hero Session</span>
+        <span style="font-size: 9px; opacity: 0.8;">▾</span>
+      </div>
+
+      <div class="workspace-runtime-badge" id="headerWorkspaceModel" style="display: none;">
+        <span class="dot" id="headerWorkspaceModelDot"></span>
+        <span id="headerWorkspaceModelName" style="font-weight: 600; color: var(--text-main)">Local Runtime (Connecting…)</span>
+      </div>
+
+      <div class="checkpoint-header-pill" id="headerWorkspaceCheckpoint" style="display: none;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-1.19"/></svg>
+        <span id="headerWorkspaceCheckpointText">Checkpoint (Pending)</span>
+      </div>
+    </div>
+
+    <!-- Right Header Actions -->
+    <div class="window-header-right">
+      <div class="model-fleet-btn" id="btnToggleHeadroom" title="Toggle Model &amp; System Telemetry">
+        <span id="headerFleetLabel">🎛 Local Fleet</span>
+        <span style="font-size: 9px;">▾</span>
+      </div>
+
+      <!-- SSE Stream Connection Indicator (Contract Requirement: id="streamStatus") -->
+      <div id="streamStatus" class="stream-status">
+        <span class="dot"></span>
+        <span id="streamStatusText">Connected</span>
+      </div>
+
+      <button class="header-btn" id="btnHeaderViewToggle" title="Toggle between Home and Workspace">
+        <span id="btnViewToggleLabel" style="font-size: 11px; font-weight: 700; color: var(--cyan-soft)">Open Workspace →</span>
+      </button>
+      <button class="header-btn" title="More Options">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ========================================================================
+       MAIN APP CONTAINER (Contract Requirement: id="appBody")
+       ======================================================================== -->
+  <div id="appBody" class="app-body">
+
+    <!-- ======================================================================
+         VIEW 1: HOME PAGE (Pic 1: Terminal Dashboard & Hero Session Launcher)
+         ====================================================================== -->
+    <div id="viewHome" class="view-home">
+
+      <!-- Left Sidebar (Home) -->
+      <aside class="home-sidebar">
+        <div class="home-sidebar-top">
+          <button class="btn-new-session" id="btnNewSessionHome">
+            <div class="btn-left">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>New Session</span>
+            </div>
+            <span class="kbd-badge">⌘K</span>
+          </button>
+
+          <div class="home-search-box">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" class="home-search-input" placeholder="Search sessions, checkpoints…">
+          </div>
+        </div>
+
+        <div class="home-sidebar-scroll">
+          <div>
+            <div class="section-label">Agent Workspace</div>
+            <nav class="nav-list">
+              <div class="nav-list-item" id="btnHomeNavSpine">
+                <div class="nav-left">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                  <span>Continuity Spine</span>
+                </div>
+                <span class="status-dot completed"></span>
+              </div>
+              <div class="nav-list-item clickable-target" id="btnHomeNavFiles" title="Switch to Files &amp; Workspace">
+                <div class="nav-left">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+                  <span>Files &amp; Sandbox</span>
+                </div>
+                <span class="tag-badge mod">3 mod</span>
+              </div>
+              <div class="nav-list-item active">
+                <div class="nav-left">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                  <span>Integrated Terminal</span>
+                </div>
+                <span class="tag-badge zsh">zsh</span>
+              </div>
+              <div class="nav-list-item">
+                <div class="nav-left">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                  <span>Automations &amp; Swarm</span>
+                </div>
+              </div>
+              <div class="nav-list-item">
+                <div class="nav-left">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>
+                  <span>Model Fallback Rules</span>
+                </div>
+              </div>
+            </nav>
+          </div>
+
+          <!-- Repositories Tree View -->
+          <div>
+            <div class="section-label">
+              <span>Repositories</span>
+              <span style="font-size: 9px; color: var(--text-dim);">⌘R</span>
+            </div>
+            <div class="repo-tree">
+              <div class="repo-node" style="font-weight: 600; color: var(--text-main);">
+                <span>▾ continuity-agent</span>
+                <span class="tag-badge live">live</span>
+              </div>
+              <!-- Dashed cyan highlight target as shown in screenshot -->
+              <div class="repo-node highlight-target" id="btnHomeRepoFsBroker" title="Open in Workspace" style="margin-left: 12px;">
+                <span>&lt;&gt; broker/fs_broker.ts</span>
+              </div>
+              <div class="repo-node" style="margin-left: 12px;">
+                <span>📄 session_jail.ts</span>
+              </div>
+              <div class="repo-node" style="margin-left: 12px;">
+                <span>📄 broker.spec.ts</span>
+              </div>
+              <div class="repo-node" style="color: var(--text-dim); margin-top: 4px;">
+                <span>▸ frontend-bridge</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="home-sidebar-foot">
+          <div class="spine-stat-row">
+            <span>Continuity Spine</span>
+            <strong id="homeSpineStatus">Active Ledger ●</strong>
+          </div>
+          <div style="height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px; margin: 4px 0 8px 0; overflow: hidden;">
+            <div style="width: 75%; height: 100%; background: linear-gradient(90deg, var(--cyan-soft), var(--emerald-soft));"></div>
+          </div>
+          <button class="btn-sync" id="btnHomeSync" disabled title="GitHub sync unavailable in local-only mode" style="opacity: 0.45; cursor: not-allowed;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+            <span>Auto-sync GitHub (Unavailable)</span>
+          </button>
+          <div class="user-card-row">
+            <div class="user-details">
+              <div class="user-circle">J</div>
+              <div>
+                <div style="font-weight: 600; font-size: 11px; color: var(--text-main);">jindam abhinay</div>
+                <div style="font-size: 9.5px; color: var(--text-muted);">Local Swarm Host</div>
+              </div>
+            </div>
+            <button class="header-btn" style="width: 20px; height: 20px;">⚙</button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Center Stage (Home Launcher & Integrated Terminal) -->
+      <main class="home-center">
+        <!-- Subcontext Bar -->
+        <div class="home-subcontext-bar">
+          <span class="subcontext-tab active">
+            <span class="status-dot completed"></span>
+            <span>Hero Session</span>
+          </span>
+          <span class="subcontext-tab jump-to-workspace" id="btnSubcontextEditor" title="Switch to Editor &amp; Diff Workspace">
+            <span>&lt;&gt; Editor &amp; Diff</span>
+            <span class="tag-badge mod">3 mod</span>
+          </span>
+          <span class="subcontext-tab" id="btnSubcontextTimeline">
+            <span>Timeline &amp; Plan</span>
+            <span class="tag-badge live">CP-04</span>
+          </span>
+          <span style="color: var(--text-dim); margin-left: auto; font-family: var(--font-mono); font-size: 10.5px;">
+            ~/Desktop/continuity-agent/broker
+          </span>
+        </div>
+
+        <!-- Top Half: Launcher -->
+        <div class="home-launcher">
+          <!-- Hero Composer Card -->
+          <div class="home-composer-card">
+            <textarea id="homeGoalInput" class="home-composer-input" placeholder="Plan, Build, / for checkpoints, @ for context, # for..."></textarea>
+            <div class="home-composer-foot">
+              <div class="composer-pill">
+                <span id="homeComposerModelTag">+ Local Model</span>
+                <span style="font-size: 10px;">🔒 Auto Fallback</span>
+              </div>
+              <button id="btnSubmitHomeGoal" class="btn-home-resume" style="padding: 5px 14px; font-size: 11px; border: none; background: var(--cyan-soft); color: #04121d;">
+                <span>Start Task →</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- PRIMARY RESUME ACTIVE CHECKPOINT BUTTON (Takes user to 2nd Image Interface) -->
+          <div class="home-resume-row">
+            <button id="btnResume" class="btn-home-resume" title="Click to Resume Active Checkpoint and open Workspace">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span id="resumeBtnText">Resume Active Checkpoint</span>
+            </button>
+            <!-- Hidden Pause button to satisfy contract requirement: id="btnPause" -->
+            <button id="btnPause" style="display: none;">Pause</button>
+          </div>
+
+          <!-- 4 Stitch Action Cards (Clicking transitions to Pic 2 Workspace) -->
+          <div class="home-actions-grid">
+            <div class="home-action-card" id="cardDeployCheckpoint">
+              <span class="action-icon-glyph" style="color: var(--amber-soft);">⚡</span>
+              <div>
+                <div style="font-weight: 600; font-size: 11.5px; color: var(--text-main);">Deploy agent checkpoint</div>
+                <div style="font-size: 10.5px; color: var(--text-secondary);">Direct container push to validated environment</div>
+              </div>
+            </div>
+
+            <div class="home-action-card jump-target" id="cardReviewPermission" title="Click to review and approve in Workspace">
+              <span class="action-icon-glyph" style="color: var(--cyan-soft);">🔄</span>
+              <div>
+                <div style="font-weight: 600; font-size: 11.5px; color: var(--cyan-soft);">Review filesystem permission patch</div>
+                <div style="font-size: 10.5px; color: var(--text-secondary);">Pending human approval for whitelist mount in permission_policy.ts</div>
+              </div>
+            </div>
+
+            <div class="home-action-card jump-target" id="cardStartPlan" title="Click to view autonomous plan in Workspace">
+              <span class="action-icon-glyph" style="color: var(--emerald-soft);">📋</span>
+              <div>
+                <div style="font-weight: 600; font-size: 11.5px; color: var(--text-main);">Start with a verified plan</div>
+                <div style="font-size: 10.5px; color: var(--text-secondary);">Align on 6-step deterministic AST traversal before executing code</div>
+              </div>
+            </div>
+
+            <div class="home-action-card" id="cardDebugTraversal">
+              <span class="action-icon-glyph" style="color: var(--indigo-soft);">🛡</span>
+              <div>
+                <div style="font-weight: 600; font-size: 11.5px; color: var(--text-main);">Debug path traversal assertions</div>
+                <div style="font-size: 10.5px; color: var(--text-secondary);">Inspect 10,000 fuzz vectors currently running in background broker</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Context & Token Headroom Card -->
+        <div id="headroomPopup" class="headroom-popup" style="display: none;">
+          <div class="headroom-title">
+            <span>Model Fleet &amp; Telemetry</span>
+            <span style="color: var(--text-muted); font-size: 11px;">Local Mode</span>
+          </div>
+
+          <div class="headroom-grid" style="grid-template-columns: 1fr; font-size: 11px; color: var(--text-muted);">
+            <div>Telemetry: System resource metrics unavailable in local engine</div>
+          </div>
+
+          <div style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); display: flex; justify-content: space-between;">
+            <span>Local Models (Ollama)</span>
+            <span style="color: var(--emerald-soft)">Zero Egress</span>
+          </div>
+
+          <div id="fleetLocalList">
+            <div class="fleet-row">
+              <div>
+                <div style="font-weight: 600; color: var(--text-main);" id="fleetPrimaryModelName">qwen2.5:32b</div>
+                <div style="font-size: 9.5px; color: var(--text-muted);">Primary local model</div>
+              </div>
+              <span class="fleet-tag active" id="fleetPrimaryStatus">Ready</span>
+            </div>
+          </div>
+
+          <div style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-top: 4px;">
+            <span>Escalation &amp; Cloud Mesh (Unavailable in local mode)</span>
+          </div>
+
+          <div class="fleet-row" style="opacity: 0.5;">
+            <div>
+              <div style="font-weight: 600; color: var(--text-secondary);">Claude 3.7 Sonnet</div>
+              <div style="font-size: 9.5px; color: var(--text-muted);">External Cloud API</div>
+            </div>
+            <span class="fleet-tag standby" style="cursor: not-allowed;" title="Cloud escalation unavailable in local-only mode">Unavailable</span>
+          </div>
+
+          <div class="headroom-menu">
+            <div class="headroom-menu-btn" id="menuInspectSpine">
+              <span>↻ Inspect Latest Checkpoint</span>
+            </div>
+            <div class="headroom-menu-btn" id="menuOpenCodeDiff">
+              <span>📋 View Code Diff (Preview)</span>
+            </div>
+            <div class="headroom-menu-btn" id="menuToggleDrawer">
+              <span>&gt;_ Toggle Terminal Drawer</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Lower Half: Integrated Terminal in View 1 -->
+        <div class="home-terminal-area">
+          <div class="terminal-tab-bar">
+            <div class="term-tab-left">
+              <span class="term-tab-pill">Problems 0</span>
+              <span class="term-tab-pill">Output</span>
+              <span class="term-tab-pill">Debug Console</span>
+              <span class="term-tab-pill active">
+                <span class="dot"></span>
+                <span>Terminal</span>
+              </span>
+              <span class="term-tab-pill">Ports 0</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span>⚠️ 1: zsh ▾</span>
+              <span style="cursor: pointer;" id="btnClearHomeTerm">🗑</span>
+              <span style="cursor: pointer;">✕</span>
+            </div>
+          </div>
+
+          <div id="homeTerminalBody" class="term-scroll">
+            <div class="prompt-row">
+              <span class="h">apple@Apples-MacBook-Air</span>
+              <span>Coding %</span>
+              <span class="c">cd ~/Desktop/continuity-agent/broker</span>
+            </div>
+            <div class="history-restored">↺ * History restored</div>
+
+            <div class="prompt-row">
+              <span class="h">apple@Apples-MacBook-Air</span>
+              <span>Coding %</span>
+              <span class="c">npx ts-node src/broker.ts --mode=supervised</span>
+            </div>
+            <div style="color: var(--cyan-soft); margin-bottom: 2px;">
+              [Continuity Runtime] Initializing sandbox containment broker…
+            </div>
+            <div class="history-restored">↺ * History restored</div>
+
+            <div class="prompt-row">
+              <span class="h">apple@Apples-MacBook-Air</span>
+              <span>Coding %</span>
+              <span class="c">git status --short</span>
+            </div>
+            <div style="color: #cbd5e1; margin-bottom: 6px;">
+              M src/broker/filesystem_broker.ts<br>
+              M src/broker/permission_policy.ts<br>
+              A src/broker/session_jail.ts
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+
+    <!-- ======================================================================
+         VIEW 2: WORKSPACE (Pic 2: 4-Column Active Engineering Workspace)
+         ====================================================================== -->
+    <div id="viewWorkspace" class="view-workspace" style="display: none;">
+
+      <!-- COLUMN 1: PROJECT RAIL -->
+      <aside class="col-rail">
+        <div class="rail-top">
+          <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.1em;">Project Rail</span>
+          <button class="btn-nav-arrow" id="btnBackToHomeFromRail" title="Back to Home">&lt;</button>
+        </div>
+
+        <div class="rail-links">
+          <div class="rail-link active">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            <span>Editor Workspace</span>
+          </div>
+          <div class="rail-link">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            <span>Checkpoint Timeline</span>
+          </div>
+          <div class="rail-link">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            <span>Agent Execution Plan</span>
+          </div>
+          <div class="rail-link">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+            <span>Diff &amp; Review</span>
+          </div>
+          <div class="rail-link">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            <span>Terminal &amp; Logs</span>
+          </div>
+          <div class="rail-link">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>Model Orchestration</span>
+          </div>
+        </div>
+
+        <div class="rail-foot">
+          <div style="display: flex; align-items: center; justify-content: space-between; font-size: 10px;">
+            <span style="font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Runtime Status</span>
+            <span class="swarm-badge" id="railRuntimeBadge">READY</span>
+          </div>
+          <div style="font-size: 10px; color: var(--text-dim); margin-top: 2px;">
+            Local Orchestrator
+          </div>
+        </div>
+      </aside>
+
+      <!-- COLUMN 2: SUB-SIDEBAR (Explorer, Checkpoints, Tasks) -->
+      <aside class="col-sub">
+        <div class="sub-tabs">
+          <span class="sub-tab active">📁 Explorer</span>
+          <span class="sub-tab">● Checkpoints</span>
+          <span class="sub-tab">⚙ Tasks</span>
+        </div>
+
+        <div class="sub-scroll">
+          <!-- Active Agent Tasks (Contract Requirement: id="taskList") -->
+          <div>
+            <div class="section-label">
+              <span>Active Agent Tasks</span>
+              <span style="color: var(--cyan-soft)" id="workspaceActiveCount">1 Active</span>
+            </div>
+            <div id="taskList" class="task-container-box">
+              <div style="font-size: 11px; color: var(--text-muted); padding: 10px;">Loading tasks from store…</div>
+            </div>
+          </div>
+
+          <!-- CONTINUITY SPINE (Contract Requirement: id="checkpointLedgerList") -->
+          <div>
+            <div class="section-label">
+              <span>Continuity Spine</span>
+              <span style="color: var(--cyan-soft); cursor: pointer;">Graph view</span>
+            </div>
+
+            <div id="checkpointLedgerList" class="spine-tree">
+              <div style="font-size: 11px; color: var(--text-muted); padding: 10px;">No checkpoints recorded yet</div>
+            </div>
+
+            <div id="spineActiveBadge" style="background: linear-gradient(135deg, rgba(56,189,248,0.1), rgba(16,185,129,0.06)); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 8px 10px; margin-top: 4px;">
+              <div style="font-size: 10.5px; font-weight: 700; color: var(--cyan-soft); display: flex; align-items: center; gap: 5px;">
+                <span class="pulsing-dot" style="width: 5px; height: 5px;"></span>
+                <span id="spineActiveStatusText">Task Execution State</span>
+              </div>
+              <div id="spineActiveDetailText" style="font-size: 10px; color: var(--text-secondary);">Awaiting active task</div>
+            </div>
+          </div>
+
+          <!-- Project Files Tree -->
+          <div>
+            <div class="section-label">
+              <span>Project Files</span>
+              <span style="color: var(--cyan-soft)">↻</span>
+            </div>
+            <div class="repo-tree">
+              <div class="repo-node"><span>▾ 📁 src</span></div>
+              <div class="repo-node" style="padding-left: 14px;"><span>▾ 📁 broker</span></div>
+              <div class="repo-node highlight-target" style="padding-left: 24px;">
+                <span>📄 filesystem_broker.ts</span>
+                <span style="color: var(--cyan-soft); font-size: 9px; font-weight: 700;">● M</span>
+              </div>
+              <div class="repo-node" style="padding-left: 24px;">
+                <span>📄 permission_policy.ts</span>
+                <span style="color: var(--cyan-soft); font-size: 9px; font-weight: 700;">M</span>
+              </div>
+              <div class="repo-node" style="padding-left: 24px;">
+                <span>📄 session_jail.ts</span>
+                <span style="color: var(--emerald-soft); font-size: 9px; font-weight: 700;">A</span>
+              </div>
+              <div class="repo-node" style="padding-left: 14px;"><span>▸ 📁 security</span></div>
+              <div class="repo-node" style="padding-left: 14px;"><span>▾ 📁 tests</span></div>
+              <div class="repo-node" style="padding-left: 24px;">
+                <span>📄 broker.security.spec.ts</span>
+                <span style="color: var(--cyan-soft); font-size: 9px; font-weight: 700;">●</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- COLUMN 3: CENTRAL WORKSPACE (Code & Diff Viewer) -->
+      <main class="col-editor">
+        <div class="editor-tabs-bar">
+          <div style="display: flex; align-items: center; gap: 4px; height: 100%;">
+            <div style="height: 100%; padding: 0 12px; display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-family: var(--font-mono); color: var(--text-main); background: var(--bg-editor); border-bottom: 2px solid var(--cyan-soft);">
+              <span>{ } filesystem_broker.ts</span>
+              <span style="font-size: 11px; opacity: 0.6;">✕</span>
+            </div>
+            <div style="height: 100%; padding: 0 12px; display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-family: var(--font-mono); color: var(--text-muted); cursor: pointer;" id="btnOpenTerminalWorkspace">
+              <span>&gt;_ Terminal</span>
+              <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--rose-deep)"></span>
+              <span style="font-size: 10px; color: var(--text-dim)">Ctrl+'</span>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <button class="header-btn" id="btnReturnHomeWorkspace" title="Back to Dashboard">
+              <span style="font-size: 11px; color: var(--emerald-soft); font-weight: 600;">← Dashboard</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="editor-sub-bar">
+          <div style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--cyan-soft); font-weight: 600;">
+            <span class="pulsing-dot"></span>
+            <span>Agent Active: Lines 42-58</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <button class="btn-sync" style="width: auto; padding: 3px 8px; font-size: 10.5px;">Rewrite Selection</button>
+            <button class="btn-sync" style="width: auto; padding: 3px 8px; font-size: 10.5px;">Inspect Diff</button>
+            <button class="btn-sync" style="width: auto; padding: 3px 8px; font-size: 10.5px;">Lock File</button>
+          </div>
+        </div>
+
+        <div class="diff-code-area" id="diffCodeArea">
+          <div class="diff-line"><span class="diff-ln">35</span><span class="diff-code" style="color: var(--text-muted); font-style: italic;">// Continuity Agent auto-instrumented sandbox container</span></div>
+          <div class="diff-line"><span class="diff-ln">37</span><span class="diff-code"><span style="color: #f472b6; font-weight: 600;">import</span> * <span style="color: #f472b6;">as</span> path <span style="color: #f472b6;">from</span> <span style="color: #34d399;">'node:path'</span>;</span></div>
+          <div class="diff-line"><span class="diff-ln">38</span><span class="diff-code"><span style="color: #f472b6; font-weight: 600;">import</span> { SecurityViolationError } <span style="color: #f472b6;">from</span> <span style="color: #34d399;">'../errors/security'</span>;</span></div>
+          <div class="diff-line"><span class="diff-ln">39</span><span class="diff-code"><span style="color: #f472b6; font-weight: 600;">import</span> { IFilesystemBroker, JailOptions } <span style="color: #f472b6;">from</span> <span style="color: #34d399;">'./types'</span>;</span></div>
+          <div class="diff-line"><span class="diff-ln">41</span><span class="diff-code"><span style="color: #f472b6; font-weight: 600;">export class</span> <span style="color: #38bdf8; font-weight: 600;">SecureFilesystemBroker</span> <span style="color: #f472b6;">implements</span> <span style="color: #f59e0b;">IFilesystemBroker</span> {</span></div>
+          <div class="diff-line"><span class="diff-ln">45</span><span class="diff-code">  <span style="color: #f472b6; font-weight: 600;">constructor</span>(options: <span style="color: #f59e0b;">JailOptions</span>) {</span></div>
+          <div class="diff-line"><span class="diff-ln">46</span><span class="diff-code">    <span style="color: #60a5fa;">this</span>.sandboxRoot = path.<span style="color: #60a5fa;">resolve</span>(options.rootPath);</span></div>
+          <div class="diff-line"><span class="diff-ln">48</span><span class="diff-code">  }</span></div>
+          <div class="diff-line"><span class="diff-ln">50</span><span class="diff-code">  <span style="color: #f472b6; font-weight: 600;">public async</span> <span style="color: #60a5fa;">resolvePath</span>(rawInputPath: <span style="color: #f59e0b;">string</span>): <span style="color: #f59e0b;">Promise&lt;string&gt;</span> {</span></div>
+
+          <!-- Red Diff Deletions -->
+          <div class="diff-line diff-del">
+            <span class="diff-ln">51</span>
+            <span class="diff-code">-   const target = path.join(this.sandboxRoot, rawInputPath); <span class="diff-badge del">Removed by Agent</span></span>
+          </div>
+          <div class="diff-line diff-del">
+            <span class="diff-ln">52</span>
+            <span class="diff-code">-   // [INSECURE: vulnerable to traversal]</span>
+          </div>
+
+          <!-- Green Diff Additions -->
+          <div class="diff-line diff-add">
+            <span class="diff-ln">53</span>
+            <span class="diff-code">+   const decoded = decodeURIComponent(rawInputPath); <span class="diff-badge add">Synthesized by Qwen 2.5</span></span>
+          </div>
+          <div class="diff-line diff-add">
+            <span class="diff-ln">54</span>
+            <span class="diff-code">+   const normalized = path.normalize(decoded).replace(/^(\.\.[\/\\])+/, '');</span>
+          </div>
+          <div class="diff-line diff-add">
+            <span class="diff-ln">55</span>
+            <span class="diff-code">+   const target = path.resolve(this.sandboxRoot, normalized);</span>
+          </div>
+          <div class="diff-line diff-add">
+            <span class="diff-ln">56</span>
+            <span class="diff-code">+   if (!target.startsWith(this.sandboxRoot)) {</span>
+          </div>
+          <div class="diff-line diff-add">
+            <span class="diff-ln">57</span>
+            <span class="diff-code">+     throw new SecurityViolationError(`Traversal escape detected: ${rawInputPath}`);</span>
+          </div>
+          <div class="diff-line diff-add">
+            <span class="diff-ln">58</span>
+            <span class="diff-code">+   }</span>
+          </div>
+          <div class="diff-line diff-add">
+            <span class="diff-ln">59</span>
+            <span class="diff-code">+   return target;</span>
+          </div>
+
+          <div class="agent-callout">
+            <span style="color: var(--cyan-soft);">✦</span>
+            <span>Continuity Agent modifying path verification logic</span>
+          </div>
+
+          <div class="diff-line"><span class="diff-ln">60</span><span class="diff-code">  }</span></div>
+          <div class="diff-line"><span class="diff-ln">62</span><span class="diff-code">  <span style="color: #f472b6; font-weight: 600;">public async</span> <span style="color: #60a5fa;">readSecure</span>(relativePath: <span style="color: #f59e0b;">string</span>): <span style="color: #f59e0b;">Promise&lt;Buffer&gt;</span> {</span></div>
+          <div class="diff-line"><span class="diff-ln">63</span><span class="diff-code">    <span style="color: #f472b6;">const</span> verifiedPath = <span style="color: #f472b6;">await this</span>.<span style="color: #60a5fa;">resolvePath</span>(relativePath);</span></div>
+          <div class="diff-line"><span class="diff-ln">64</span><span class="diff-code">    <span style="color: #f472b6;">return</span> fs.promises.<span style="color: #60a5fa;">readFile</span>(verifiedPath);</span></div>
+          <div class="diff-line"><span class="diff-ln">65</span><span class="diff-code">  }</span></div>
+          <div class="diff-line"><span class="diff-ln">66</span><span class="diff-code">}</span></div>
+        </div>
+
+        <!-- Activity Stream Console in Workspace (Contract Requirement: id="bottomConsole") -->
+        <div id="bottomConsole" class="workspace-bottom-console">
+          <div class="console-bar">
+            <span>&gt;_ Activity Log &amp; Stream Console</span>
+            <button class="header-btn" style="width: 22px; height: 22px;" id="btnClearWorkspaceLogs">🗑</button>
+          </div>
+          <div id="consoleBody" class="console-logs-scroll">
+            <div style="display: flex; gap: 8px;">
+              <span style="color: var(--text-dim)">[14:02:18]</span>
+              <span style="color: var(--cyan-soft); font-weight: 700;">[SYSTEM]</span>
+              <span>Continuity Agent initialized with project jail: /continuity-agent</span>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <span style="color: var(--text-dim)">[14:02:19]</span>
+              <span style="color: var(--emerald-soft); font-weight: 700;">[SQLITE]</span>
+              <span>Authoritative event store opened. Checkpoint schema verified.</span>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <!-- COLUMN 4: RIGHT PANEL (Agent Execution Engine) -->
+      <aside class="col-engine">
+        <div class="engine-head">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;">Agent Execution Engine</span>
+            <span style="font-size: 9.5px; font-weight: 700; padding: 2px 7px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: var(--cyan-soft); border: 1px solid rgba(56, 189, 248, 0.35);">Autonomous Mode</span>
+          </div>
+
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-main)" id="engineTaskHeader">
+            Task: Implement secure filesystem broker v2.4 AST
+          </div>
+
+          <div class="engine-btn-group">
+            <button id="btnPauseWorkspace" class="btn-exec-ctrl pause">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              <span>Pause Task</span>
+            </button>
+            <button id="btnResumeWorkspace" class="btn-exec-ctrl resume" style="display: none;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span>Resume</span>
+            </button>
+            <button class="btn-exec-ctrl" disabled title="Manual model handoff is not available; automatic fallback is active." style="opacity: 0.45; cursor: not-allowed;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>
+              <span>Handoff (Auto-only)</span>
+            </button>
+            <button class="btn-exec-ctrl" disabled title="Checkpoint rollback unavailable; continuation resumes from latest checkpoint only." style="opacity: 0.45; cursor: not-allowed;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              <span>Rollback (Unavailable)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Model Handoff Notice Banner (Contract Requirement: id="handoffBanner") -->
+        <div id="handoffBanner" class="handoff-banner" style="display: none;">
+          <span style="font-size: 11px; font-weight: 600;">
+            Model Fallback: <span id="handoffPrevModel">—</span> &rarr; <span id="handoffTargetModel">—</span>
+            <span id="handoffReason" style="font-size: 10px; color: var(--text-muted);"></span>
+          </span>
+        </div>
+
+        <div class="engine-scroll-body">
+          <!-- CARD 1: APPROVAL REQUIRED (Preview — workflow pending backend endpoint) -->
+          <div id="approvalCard" class="approval-box">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span class="approval-pill">Approval Required (Preview • Workflow Pending)</span>
+              <span style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono)">Action #A-891</span>
+            </div>
+
+            <div style="font-size: 12.5px; font-weight: 700; color: #ffffff;">
+              Grant Whitelist Patch in Permission Policy
+            </div>
+
+            <div style="font-size: 11px; color: var(--text-secondary); line-height: 1.4;">
+              Agent detected 2 custom volume mounts requiring elevated read access to complete path resolution without crashing root sandbox.
+            </div>
+
+            <div style="background: #060910; border: 1px solid var(--border-subtle); border-radius: 5px; padding: 7px 9px; font-family: var(--font-mono); font-size: 10.5px;">
+              <div style="color: var(--text-muted); font-size: 10px;">Target: src/broker/permission_policy.ts:88</div>
+              <div style="color: var(--emerald-soft);">Change: + whitelist.allow('/mnt/continuity-cache')</div>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px;">
+              <button class="btn-approve-primary" id="btnApproveAction" disabled title="Approval resolution endpoint is not yet implemented on the server" style="opacity: 0.5; cursor: not-allowed;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                <span>Approve Patch (Pending API)</span>
+              </button>
+              <button class="btn-sync" style="flex: 1; padding: 6px; opacity: 0.5; cursor: not-allowed;" id="btnReviewAction" disabled title="Diff review is preview only">Review Diff (Preview)</button>
+              <button class="btn-sync" style="flex: 1; padding: 6px; opacity: 0.5; cursor: not-allowed;" id="btnDenyAction" disabled title="Denial endpoint is not yet implemented on the server">Deny (Pending API)</button>
+            </div>
+          </div>
+
+          <!-- CARD 2: ACTIVE TOOL RUNNER -->
+          <div class="tool-runner-box" id="activeToolRunnerBox">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span id="activeToolRunnerTitle" style="font-size: 11.5px; font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                Active Tool: Idle
+              </span>
+              <span id="activeToolRunnerBadge" style="font-size: 10px; font-weight: 700; color: var(--text-muted); display: flex; align-items: center; gap: 5px;">
+                Standby
+              </span>
+            </div>
+
+            <div id="activeToolRunnerCmd" style="background: #060910; border: 1px solid var(--border-subtle); border-radius: 5px; padding: 6px 8px; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted); display: flex; justify-content: space-between;">
+              <span>Awaiting tool invocation…</span>
+              <span style="color: var(--text-dim); font-size: 10px;">isolated runner</span>
+            </div>
+
+            <div id="activeToolRunnerStats" style="display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-secondary);">
+              <span>Status: <strong style="color: var(--text-muted)" id="activeToolStatusDetail">Standby</strong></span>
+              <span>Subprocess: <strong style="color: var(--emerald-soft)">Sandboxed</strong></span>
+            </div>
+          </div>
+
+          <!-- CARD 3: AUTONOMOUS PLAN (Contract Requirement: id="timelineList") -->
+          <div class="plan-box">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; display: flex; align-items: center; gap: 6px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                Autonomous Plan (Preview Template)
+              </span>
+              <span style="font-size: 9px; color: var(--amber-soft); text-transform: uppercase;">Preview Plan</span>
+            </div>
+
+            <div id="timelineList" style="display: flex; flex-direction: column; gap: 8px;">
+              <div class="plan-step-row">
+                <span class="step-ico done">✓</span>
+                <div>
+                  <div style="font-weight: 600; color: var(--text-main);">1. Inspect existing filesystem access patterns</div>
+                  <div style="font-size: 10.5px; color: var(--text-secondary);">Identified 3 un-sanitized path.resolve calls</div>
+                </div>
+              </div>
+
+              <div class="plan-step-row">
+                <span class="step-ico done">✓</span>
+                <div>
+                  <div style="font-weight: 600; color: var(--text-main);">2. Define sandbox containment boundaries</div>
+                  <div style="font-size: 10.5px; color: var(--text-secondary);">Created session_jail.ts specification</div>
+                </div>
+              </div>
+
+              <div class="plan-step-row">
+                <span class="step-ico done">✓</span>
+                <div>
+                  <div style="font-weight: 600; color: var(--text-main);">3. Implement canonical path sanitization &amp; jail</div>
+                  <div style="font-size: 10.5px; color: var(--text-secondary);">Modified filesystem_broker.ts (Saved in CP-04)</div>
+                </div>
+              </div>
+
+              <div class="plan-step-row">
+                <span class="step-ico active">●</span>
+                <div>
+                  <div style="font-weight: 600; color: var(--cyan-soft);">4. Run automated exploit and traversal test suite</div>
+                  <div style="font-size: 10.5px; color: var(--text-secondary);">Executing fuzz matrix (10,000 vectors)</div>
+                </div>
+              </div>
+
+              <div class="plan-step-row">
+                <span class="step-ico pending">○</span>
+                <div>
+                  <div style="font-weight: 600; color: var(--text-muted);">5. Commit and verify Checkpoint 05</div>
+                  <div style="font-size: 10.5px; color: var(--text-secondary);">State AST snapshot + cryptographic integrity hash</div>
+                </div>
+              </div>
+
+              <div class="plan-step-row">
+                <span class="step-ico pending">○</span>
+                <div>
+                  <div style="font-weight: 600; color: var(--text-muted);">6. Ready for review &amp; automated PR generation</div>
+                  <div style="font-size: 10.5px; color: var(--text-secondary);">Pending final audit</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+    </div>
+
+  </div>
+
+  <!-- ========================================================================
+       SHARED BOTTOM WINDOW FOOTER BAR
+       ======================================================================== -->
+  <footer class="window-footer-bar">
+    <div class="foot-left">
+      <div class="foot-item active">
+        <span class="status-dot completed" style="width: 6px; height: 6px;" id="footerAgentStatusDot"></span>
+        <span id="footerAgentStatus">Agent: Standby</span>
+      </div>
+      <div class="foot-item">
+        <span>Project Root: <span id="footerProjectRoot">continuity-agent</span></span>
+      </div>
+      <div class="foot-item" style="color: var(--emerald-soft); font-family: var(--font-mono);">
+        <span>🛡 Integrity: <span id="footerIntegrityText">Verified</span> (SHA: <span id="footerIntegrityHash">—</span>)</span>
+      </div>
+      <div class="foot-item term-pill" id="footerTerminalPill">
+        <span>&gt;_ Terminal (Active) [•]</span>
+      </div>
+    </div>
+
+    <div class="foot-right">
+      <div class="foot-item" style="color: var(--text-secondary); font-family: var(--font-mono);">
+        <span>Local Mode (Zero Egress)</span>
+      </div>
+      <div class="foot-item" style="color: var(--text-dim);">
+        <span>UTF-8</span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ========================================================================
+       CLIENT APPLICATION JAVASCRIPT LOGIC
+       ======================================================================== -->
+  <script>
+    /**
+     * Continuity Agent — Unified Stitch Application Shell
+     * Smoothly transitions between:
+     * - View 1: Home Page (Terminal Dashboard & Hero Session Launcher)
+     * - View 2: Workspace (4-Column Code Diff & Agent Execution Engine)
+     *
+     * Backed authoritatively by:
+     * - /api/tasks
+     * - /api/tasks/:id/snapshot
+     * - /events?lastSeq= (all 15 backend event types)
+     * - POST /api/tasks
+     * - POST /api/tasks/:id/pause
+     * - POST /api/tasks/:id/continue
+     * - /api/config
+     * - /api/health
+     */
+
+    // --- State ---
+    let currentView = 'home'; // 'home' | 'workspace'
+    let tasks = [];
+    let activeTaskId = null;
+    let config = {};
+    let health = { reachable: false, models: [] };
+    let lastSeq = 0;
+    const seenEventIds = new Set();
+    let evtSource = null;
+
+    // --- Utilities ---
+    const esc = s => String(s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const fmtTime = iso => {
+      if (!iso) return '';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      } catch { return iso; }
+    };
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, {
+        headers: { 'content-type': 'application/json' },
+        ...options
+      });
+      let data = {};
+      try { data = await res.json(); } catch { data = {}; }
+      if (!res.ok) {
+        const err = new Error(data.error || `HTTP ${res.status}`);
+        err.statusCode = res.status;
+        err.payload = data;
+        throw err;
+      }
+      return data;
+    }
+
+    function addConsoleEntry(tag, text, level = 'info') {
+      const body = document.getElementById('consoleBody');
+      const homeBody = document.getElementById('homeTerminalBody');
+      const time = fmtTime(new Date().toISOString());
+
+      if (body) {
+        const line = document.createElement('div');
+        line.style.display = 'flex';
+        line.style.gap = '8px';
+        line.innerHTML = `<span style="color: var(--text-dim)">[${time}]</span><span style="color: var(--${level === 'error' ? 'rose-soft' : (level === 'success' ? 'emerald-soft' : 'cyan-soft')}); font-weight: 700;">[${esc(tag)}]</span><span style="color: #cbd5e1">${esc(text)}</span>`;
+        body.appendChild(line);
+        body.scrollTop = body.scrollHeight;
+      }
+
+      if (homeBody) {
+        const homeLine = document.createElement('div');
+        homeLine.className = 'prompt-row';
+        homeLine.innerHTML = `<span class="h">[${esc(tag)}]</span> <span>${esc(text)}</span>`;
+        homeBody.appendChild(homeLine);
+        homeBody.scrollTop = homeBody.scrollHeight;
+      }
+    }
+
+    // --- View Navigation System ---
+    function setView(viewName) {
+      currentView = viewName;
+      const vHome = document.getElementById('viewHome');
+      const vWorkspace = document.getElementById('viewWorkspace');
+      const breadcrumb = document.getElementById('headerBreadcrumb');
+      const heroBtn = document.getElementById('btnHeroSessionCenter');
+      const wsModel = document.getElementById('headerWorkspaceModel');
+      const wsCheckpoint = document.getElementById('headerWorkspaceCheckpoint');
+      const toggleLabel = document.getElementById('btnViewToggleLabel');
+
+      if (viewName === 'workspace') {
+        vHome.style.display = 'none';
+        vWorkspace.style.display = 'grid';
+        breadcrumb.style.display = 'flex';
+        heroBtn.style.display = 'none';
+        wsModel.style.display = 'flex';
+        wsCheckpoint.style.display = 'flex';
+        toggleLabel.textContent = '← Dashboard';
+        toggleLabel.style.color = 'var(--emerald-soft)';
+      } else {
+        vWorkspace.style.display = 'none';
+        vHome.style.display = 'grid';
+        breadcrumb.style.display = 'none';
+        heroBtn.style.display = 'flex';
+        wsModel.style.display = 'none';
+        wsCheckpoint.style.display = 'none';
+        toggleLabel.textContent = 'Open Workspace →';
+        toggleLabel.style.color = 'var(--cyan-soft)';
+      }
+    }
+
+    // --- SSE Connection & Typed Event Router ---
+    function updateConnectionStatus(status, text) {
+      const el = document.getElementById('streamStatus');
+      const txt = document.getElementById('streamStatusText');
+      if (!el || !txt) return;
+      el.className = 'stream-status ' + status;
+      txt.textContent = text || (status === 'connected' ? 'Live Stream' : (status === 'reconnecting' ? `Reconnecting (${lastSeq})…` : 'Offline'));
+    }
+
+    function connectSSE() {
+      if (evtSource) {
+        evtSource.close();
+        evtSource = null;
+      }
+
+      const url = lastSeq > 0 ? `/events?lastSeq=${lastSeq}` : '/events';
+      updateConnectionStatus('reconnecting', `Connecting (${lastSeq})…`);
+
+      evtSource = new EventSource(url);
+
+      evtSource.onopen = () => {
+        updateConnectionStatus('connected');
+        addConsoleEntry('SSE', `Connected to event stream bus (lastSeq: ${lastSeq})`, 'success');
+      };
+
+      evtSource.onerror = async () => {
+        updateConnectionStatus('reconnecting');
+        addConsoleEntry('SSE', 'Stream interrupted. Reconnecting…', 'warn');
+        if (activeTaskId) {
+          await reconcileSnapshot(activeTaskId);
+        }
+      };
+
+      const eventTypes = [
+        'task_created',
+        'task_updated',
+        'task_state_changed',
+        'task_paused',
+        'task_completed',
+        'task_failed',
+        'step_started',
+        'tool_started',
+        'tool_completed',
+        'tool_failed',
+        'checkpoint_created',
+        'model_switching',
+        'model_switched',
+        'approval_required',
+        'recovery_required'
+      ];
+
+      for (const type of eventTypes) {
+        evtSource.addEventListener(type, handleSSEMessage);
+      }
+      evtSource.addEventListener('task', handleLegacyTaskMessage);
+    }
+
+    function handleSSEMessage(e) {
+      try {
+        const event = JSON.parse(e.data);
+        if (!event || typeof event !== 'object') return;
+
+        if (event.id && seenEventIds.has(event.id)) return;
+        if (event.id) {
+          seenEventIds.add(event.id);
+          if (seenEventIds.size > 2000) {
+            const first = seenEventIds.values().next().value;
+            seenEventIds.delete(first);
+          }
+        }
+
+        if (Number.isInteger(event.seq) && event.seq > lastSeq) {
+          lastSeq = event.seq;
+        }
+
+        routeTypedEvent(event.type, event.taskId, event.payload || {}, event.timestamp);
+      } catch (err) {
+        console.error('Error in SSE handler:', err);
+      }
+    }
+
+    function handleLegacyTaskMessage(e) {
+      try {
+        const task = JSON.parse(e.data);
+        if (!task?.id) return;
+        const idx = tasks.findIndex(t => t.id === task.id);
+        if (idx >= 0) {
+          tasks[idx] = { ...tasks[idx], ...task };
+        } else {
+          tasks.unshift(task);
+        }
+        renderTasks();
+      } catch {}
+    }
+
+    // --- Snapshot Reconciliation ---
+    async function reconcileSnapshot(taskId) {
+      if (!taskId) return;
+      try {
+        const res = await api(`/api/tasks/${taskId}/snapshot`);
+        if (!res || !res.task) return;
+
+        if (Number.isInteger(res.currentSeq) && res.currentSeq > lastSeq) {
+          lastSeq = res.currentSeq;
+        }
+
+        const idx = tasks.findIndex(t => t.id === taskId);
+        if (idx >= 0) {
+          tasks[idx] = { ...tasks[idx], ...res.task };
+        } else {
+          tasks.unshift(res.task);
+        }
+
+        renderTasks();
+        addConsoleEntry('SNAPSHOT', `Reconciled snapshot for ${taskId.slice(0, 8)} (currentSeq: ${res.currentSeq})`, 'info');
+      } catch (err) {
+        addConsoleEntry('SNAPSHOT', `Snapshot fetch failed: ${err.message}`, 'error');
+      }
+    }
+
+    // --- Event Routing ---
+    function routeTypedEvent(type, taskId, payload, timestamp) {
+      const task = tasks.find(t => t.id === taskId);
+
+      switch (type) {
+        case 'task_created': {
+          const newTask = {
+            id: taskId,
+            goal: payload.goal || 'New Task',
+            status: payload.status || 'queued',
+            message: payload.message || 'Task queued',
+            activeModel: payload.activeModel || '',
+            createdAt: timestamp || new Date().toISOString(),
+            updatedAt: timestamp || new Date().toISOString(),
+            steps: [],
+            checkpoints: []
+          };
+          if (!tasks.some(t => t.id === taskId)) tasks.unshift(newTask);
+          if (!activeTaskId) activeTaskId = taskId;
+          addConsoleEntry('TASK', `Created task: ${newTask.goal.slice(0, 50)}`, 'info');
+          break;
+        }
+        case 'task_updated': {
+          if (task) {
+            Object.assign(task, payload);
+            task.updatedAt = timestamp || new Date().toISOString();
+          }
+          break;
+        }
+        case 'task_state_changed': {
+          if (task) {
+            task.status = payload.nextStatus || task.status;
+            task.message = payload.message || task.message;
+            task.updatedAt = timestamp || new Date().toISOString();
+          }
+          addConsoleEntry('STATE', `${payload.previousStatus || 'prev'} → ${payload.nextStatus || 'next'}: ${payload.message || ''}`, 'info');
+          break;
+        }
+        case 'task_paused': {
+          if (task) {
+            task.status = 'paused';
+            task.message = payload.message || 'Task paused';
+          }
+          addConsoleEntry('PAUSE', payload.message || 'Task paused', 'warn');
+          break;
+        }
+        case 'task_completed': {
+          if (task) {
+            task.status = 'completed';
+            task.message = payload.message || 'Task completed';
+          }
+          addConsoleEntry('DONE', payload.message || 'Execution finished successfully', 'success');
+          break;
+        }
+        case 'task_failed': {
+          if (task) {
+            task.status = 'failed';
+            task.message = payload.message || 'Task failed';
+          }
+          addConsoleEntry('FAIL', payload.message || 'Execution terminated with error', 'error');
+          break;
+        }
+        case 'step_started': {
+          if (task) {
+            task.activeModel = payload.activeModel || task.activeModel;
+            if (!Array.isArray(task.steps)) task.steps = [];
+            task.steps.push({
+              kind: 'step_started',
+              name: `Step ${payload.step}`,
+              model: payload.activeModel,
+              at: timestamp || new Date().toISOString()
+            });
+          }
+          addConsoleEntry('STEP', `Step ${payload.step} invoked with ${payload.activeModel || 'model'}`, 'info');
+          break;
+        }
+        case 'tool_started': {
+          if (task) {
+            if (!Array.isArray(task.steps)) task.steps = [];
+            task.steps.push({ kind: 'tool_started', name: payload.toolName || 'tool', detail: payload.detail || '' });
+          }
+          const tTitle = document.getElementById('activeToolRunnerTitle');
+          const tBadge = document.getElementById('activeToolRunnerBadge');
+          const tCmd = document.getElementById('activeToolRunnerCmd');
+          const tStatus = document.getElementById('activeToolStatusDetail');
+          if (tTitle) tTitle.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Active Tool: ${esc(payload.toolName || 'runner')}`;
+          if (tBadge) { tBadge.textContent = 'Executing'; tBadge.style.color = 'var(--cyan-soft)'; }
+          if (tCmd) tCmd.textContent = payload.toolName ? `Executing tool: ${payload.toolName}` : 'Executing…';
+          if (tStatus) { tStatus.textContent = 'Running'; tStatus.style.color = 'var(--cyan-soft)'; }
+          addConsoleEntry('TOOL', `Running: ${payload.toolName || 'tool'}`, 'info');
+          break;
+        }
+        case 'tool_completed': {
+          if (task) {
+            if (!Array.isArray(task.steps)) task.steps = [];
+            task.steps.push({ kind: 'tool_completed', name: payload.toolName || 'tool', detail: payload.detail || '' });
+          }
+          const tBadge = document.getElementById('activeToolRunnerBadge');
+          const tStatus = document.getElementById('activeToolStatusDetail');
+          if (tBadge) { tBadge.textContent = 'Completed'; tBadge.style.color = 'var(--emerald-soft)'; }
+          if (tStatus) { tStatus.textContent = 'Success'; tStatus.style.color = 'var(--emerald-soft)'; }
+          addConsoleEntry('TOOL', `Success: ${payload.toolName || 'tool'}`, 'success');
+          break;
+        }
+        case 'tool_failed': {
+          if (task) {
+            if (!Array.isArray(task.steps)) task.steps = [];
+            task.steps.push({ kind: 'tool_failed', name: payload.toolName || 'tool', detail: payload.detail || '' });
+          }
+          const tBadge = document.getElementById('activeToolRunnerBadge');
+          const tStatus = document.getElementById('activeToolStatusDetail');
+          if (tBadge) { tBadge.textContent = 'Failed'; tBadge.style.color = 'var(--rose-soft)'; }
+          if (tStatus) { tStatus.textContent = 'Error'; tStatus.style.color = 'var(--rose-soft)'; }
+          addConsoleEntry('TOOL', `Failed: ${payload.toolName} — ${payload.detail}`, 'error');
+          break;
+        }
+        case 'checkpoint_created': {
+          if (task) {
+            if (!Array.isArray(task.checkpoints)) task.checkpoints = [];
+            task.checkpoints.unshift({
+              id: payload.id,
+              event: payload.event || 'Checkpoint',
+              status: payload.status || task.status,
+              step: payload.step || 0,
+              hash: payload.hash || '',
+              createdAt: payload.createdAt || timestamp || new Date().toISOString()
+            });
+          }
+          const shortHash = payload.hash ? payload.hash.slice(0, 7) : '—';
+          const integrityEl = document.getElementById('footerIntegrityHash');
+          if (integrityEl) integrityEl.textContent = shortHash;
+          const resumeBtn = document.getElementById('resumeBtnText');
+          if (resumeBtn) resumeBtn.textContent = `Resume Active Checkpoint (CP-${String(payload.step || '01').padStart(2, '0')})`;
+          addConsoleEntry('CHECKPOINT', `[CP] ${payload.event || 'Checkpoint'} (SHA: ${shortHash})`, 'info');
+          break;
+        }
+        case 'model_switching': {
+          showHandoff(payload.previousModel, payload.targetModel, payload.reason);
+          addConsoleEntry('HANDOFF', `Switching: ${payload.previousModel} → ${payload.targetModel}`, 'warn');
+          break;
+        }
+        case 'model_switched': {
+          hideHandoff();
+          if (task) task.activeModel = payload.targetModel;
+          addConsoleEntry('HANDOFF', `Model switched to ${payload.targetModel}`, 'success');
+          break;
+        }
+        case 'approval_required': {
+          addConsoleEntry('APPROVAL', `Authorization needed: ${payload.message}`, 'warn');
+          break;
+        }
+        case 'recovery_required': {
+          addConsoleEntry('RECOVERY', `Checkpoint mismatch: ${payload.reason}`, 'error');
+          reconcileSnapshot(taskId);
+          break;
+        }
+      }
+
+      renderTasks();
+    }
+
+    // --- Task Actions ---
+    async function requestPause(taskId) {
+      if (!taskId) return;
+      addConsoleEntry('ACTION', `Requesting pause for ${taskId.slice(0, 8)}…`, 'info');
+      try {
+        const res = await api(`/api/tasks/${taskId}/pause`, { method: 'POST' });
+        if (!res.ok) {
+          alert(res.error || 'Could not pause.');
+        } else {
+          addConsoleEntry('ACTION', 'Pause request acknowledged.', 'success');
+          await reconcileSnapshot(taskId);
+        }
+      } catch (err) {
+        addConsoleEntry('ACTION', `Pause failed: ${err.message}`, 'error');
+      }
+    }
+
+    async function requestResume(taskId) {
+      if (!taskId) return;
+      addConsoleEntry('ACTION', `Resuming ${taskId.slice(0, 8)} from checkpoint…`, 'info');
+      try {
+        await api(`/api/tasks/${taskId}/continue`, { method: 'POST' });
+        addConsoleEntry('ACTION', 'Continuation queued.', 'success');
+        await reconcileSnapshot(taskId);
+      } catch (err) {
+        addConsoleEntry('ACTION', `Resume failed: ${err.message}`, 'error');
+      }
+    }
+
+    function showHandoff(prev, target, reason) {
+      const banner = document.getElementById('handoffBanner');
+      if (!banner) return;
+      document.getElementById('handoffPrevModel').textContent = prev || 'previous';
+      document.getElementById('handoffTargetModel').textContent = target || 'target';
+      document.getElementById('handoffReason').textContent = reason ? `(${reason})` : '';
+      banner.style.display = 'flex';
+    }
+    function hideHandoff() {
+      const banner = document.getElementById('handoffBanner');
+      if (banner) banner.style.display = 'none';
+    }
+
+    // --- View Rendering ---
+    function renderTasks() {
+      const container = document.getElementById('taskList');
+      const activeCount = document.getElementById('workspaceActiveCount');
+      if (!container) return;
+
+      const runningCount = tasks.filter(t => t.status === 'running').length;
+      if (activeCount) activeCount.textContent = `${runningCount} Active`;
+
+      const activeTask = tasks.find(t => t.id === activeTaskId) || tasks[0];
+
+      if (activeTask) {
+        const footerStatus = document.getElementById('footerAgentStatus');
+        if (footerStatus) footerStatus.textContent = `Agent: ${esc(activeTask.status.toUpperCase())}`;
+        const engineHeader = document.getElementById('engineTaskHeader');
+        if (engineHeader) engineHeader.textContent = `Task: ${esc(activeTask.goal)}`;
+        const btnPauseWs = document.getElementById('btnPauseWorkspace');
+        const btnResumeWs = document.getElementById('btnResumeWorkspace');
+        if (btnPauseWs && btnResumeWs) {
+          if (activeTask.status === 'running') {
+            btnPauseWs.style.display = 'inline-flex';
+            btnResumeWs.style.display = 'none';
+          } else if (activeTask.status === 'paused') {
+            btnPauseWs.style.display = 'none';
+            btnResumeWs.style.display = 'inline-flex';
+          }
+        }
+
+        const resumeBtn = document.getElementById('resumeBtnText');
+        if (resumeBtn) {
+          if (activeTask.checkpoints && activeTask.checkpoints.length) {
+            resumeBtn.textContent = `Resume Active Checkpoint (CP-${String(activeTask.checkpoints[0].step || '01').padStart(2, '0')})`;
+          } else {
+            resumeBtn.textContent = `Open Active Task (${esc(activeTask.status)})`;
+          }
+        }
+
+        const cpHeaderPill = document.getElementById('headerWorkspaceCheckpointText');
+        if (cpHeaderPill) {
+          if (activeTask.checkpoints && activeTask.checkpoints.length) {
+            cpHeaderPill.textContent = `Checkpoint #${String(activeTask.checkpoints[0].step || 1).padStart(2, '0')} (${esc(activeTask.status.toUpperCase())})`;
+          } else {
+            cpHeaderPill.textContent = `Task (${esc(activeTask.status.toUpperCase())})`;
+          }
+        }
+
+        const spineStatus = document.getElementById('homeSpineStatus');
+        if (spineStatus) {
+          const cpCount = (activeTask.checkpoints && activeTask.checkpoints.length) || 0;
+          spineStatus.textContent = cpCount ? `${cpCount} CP ●` : 'Live Ledger ●';
+        }
+      }
+
+      if (!tasks.length) {
+        container.innerHTML = '<div style="font-size: 11px; color: var(--text-muted); padding: 10px;">No active tasks in SQLite store</div>';
+        return;
+      }
+
+      container.innerHTML = tasks.map(t => {
+        const isCurrent = t.id === activeTaskId;
+        return `
+          <div class="active-task-card ${isCurrent ? 'active' : ''}" onclick="selectTask('${t.id}')">
+            <div class="active-task-top">
+              <span class="active-task-title" title="${esc(t.goal)}">
+                <span class="status-dot ${esc(t.status)}"></span>
+                ${esc(t.goal)}
+              </span>
+              <span style="font-size: 10px; font-weight: 600; color: var(--cyan-soft); background: var(--cyan-bg); padding: 1px 6px; border-radius: 4px;">${esc(t.status)}</span>
+            </div>
+            <div style="font-size: 10.5px; color: var(--text-secondary)">
+              ${esc(t.message || 'In execution')}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      renderCheckpointsAndSteps();
+    }
+
+    function selectTask(id) {
+      activeTaskId = id;
+      renderTasks();
+    }
+
+    function renderCheckpointsAndSteps() {
+      const task = tasks.find(t => t.id === activeTaskId);
+      if (!task) return;
+
+      const cpContainer = document.getElementById('checkpointLedgerList');
+      if (cpContainer) {
+        if (task.checkpoints && task.checkpoints.length) {
+          cpContainer.innerHTML = task.checkpoints.map((cp, idx) => {
+            const isActive = idx === 0;
+            const shortSha = cp.hash ? cp.hash.slice(0, 7) : '—';
+            return `
+              <div class="spine-step-node ${isActive ? 'active' : ''}">
+                <div class="spine-node-card">
+                  <span style="font-size: 10px; font-weight: 700; color: ${isActive ? 'var(--cyan-soft)' : 'var(--text-secondary)'}; font-family: var(--font-mono)">
+                    CP-${String(cp.step || idx + 1).padStart(2, '0')} ${isActive ? '(ACTIVE)' : ''} ${fmtTime(cp.createdAt)} • ${esc(task.activeModel || 'Local')}
+                  </span>
+                  <span style="font-size: 11px; font-weight: 500;">${esc(cp.event || 'Checkpoint')}</span>
+                  <span style="font-size: 10px; color: ${isActive ? 'var(--emerald-soft)' : 'var(--text-muted)'}; font-family: var(--font-mono)">
+                    Step ${cp.step || 0} Verified • SHA: ${esc(shortSha)}
+                  </span>
+                </div>
+              </div>
+            `;
+          }).join('');
+
+          const latest = task.checkpoints[0];
+          const hashEl = document.getElementById('footerIntegrityHash');
+          if (hashEl) hashEl.textContent = latest.hash ? latest.hash.slice(0, 7) : '—';
+        } else {
+          cpContainer.innerHTML = '<div style="font-size: 11px; color: var(--text-muted); padding: 10px;">No checkpoints recorded yet for this task</div>';
+          const hashEl = document.getElementById('footerIntegrityHash');
+          if (hashEl) hashEl.textContent = '—';
+        }
+
+        const spineBadgeText = document.getElementById('spineActiveStatusText');
+        const spineBadgeDetail = document.getElementById('spineActiveDetailText');
+        if (spineBadgeText) spineBadgeText.textContent = `${esc(task.status.toUpperCase())}: ${esc(task.goal.slice(0, 24))}…`;
+        if (spineBadgeDetail) spineBadgeDetail.textContent = `Steps: ${task.steps ? task.steps.length : 0} • Checkpoints: ${task.checkpoints ? task.checkpoints.length : 0}`;
+      }
+
+      const planContainer = document.getElementById('timelineList');
+      if (planContainer && task.steps && task.steps.length) {
+        planContainer.innerHTML = task.steps.map((st, idx) => {
+          const isLast = idx === task.steps.length - 1;
+          const isRunning = task.status === 'running' && isLast;
+          return `
+            <div class="plan-step-row">
+              <span class="step-ico ${isRunning ? 'active' : 'done'}">${isRunning ? '●' : '✓'}</span>
+              <div>
+                <div style="font-weight: 600; color: ${isRunning ? 'var(--cyan-soft)' : 'var(--text-main)'};">
+                  ${idx + 1}. ${esc(st.name || st.kind)}
+                </div>
+                <div style="font-size: 10.5px; color: var(--text-secondary);">${esc(st.detail || fmtTime(st.at))}</div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+    }
+
+    // --- Data Bootstrap ---
+    async function loadWorkspace() {
+      try {
+        const [loadedTasks, loadedConfig, loadedHealth] = await Promise.all([
+          api('/api/tasks').catch(() => []),
+          api('/api/config').catch(() => ({})),
+          api('/api/health').catch(() => ({ reachable: false, models: [] }))
+        ]);
+
+        tasks = Array.isArray(loadedTasks) ? loadedTasks : [];
+        config = loadedConfig;
+        health = loadedHealth;
+
+        if (config.allowedRoots && config.allowedRoots.length) {
+          const root = config.allowedRoots[0].split('/').filter(Boolean).pop() || 'continuity-agent';
+          const projectRootEl = document.getElementById('footerProjectRoot');
+          if (projectRootEl) projectRootEl.textContent = root;
+        }
+
+        const modelNameEl = document.getElementById('headerWorkspaceModelName');
+        const modelDotEl = document.getElementById('headerWorkspaceModelDot');
+        const fleetPrimary = document.getElementById('fleetPrimaryModelName');
+        const fleetStatus = document.getElementById('fleetPrimaryStatus');
+        const composerTag = document.getElementById('homeComposerModelTag');
+
+        if (health.reachable) {
+          const primaryModel = (health.models && health.models[0]) || config.defaultModel || 'Local Model';
+          if (modelNameEl) modelNameEl.textContent = `Local ${primaryModel} (Ready)`;
+          if (modelDotEl) { modelDotEl.style.background = 'var(--emerald-soft)'; modelDotEl.style.boxShadow = '0 0 5px var(--emerald-soft)'; }
+          if (fleetPrimary) fleetPrimary.textContent = primaryModel;
+          if (fleetStatus) { fleetStatus.textContent = 'Serving'; fleetStatus.className = 'fleet-tag active'; }
+          if (composerTag) composerTag.textContent = `+ ${primaryModel}`;
+        } else {
+          if (modelNameEl) modelNameEl.textContent = `Local Runtime (Offline)`;
+          if (modelDotEl) { modelDotEl.style.background = 'var(--amber-soft)'; modelDotEl.style.boxShadow = 'none'; }
+          if (fleetStatus) { fleetStatus.textContent = 'Offline'; fleetStatus.className = 'fleet-tag standby'; }
+        }
+
+        if (!activeTaskId && tasks.length) {
+          const active = tasks.find(t => t.status === 'running') || tasks[0];
+          activeTaskId = active.id;
+        }
+
+        renderTasks();
+        addConsoleEntry('SYSTEM', 'Connected to SQLite backend & model catalog', 'info');
+      } catch (err) {
+        addConsoleEntry('SYSTEM', `Sync failed: ${err.message}`, 'error');
+      }
+    }
+
+    // --- DOM Event Bindings ---
+    document.addEventListener('DOMContentLoaded', () => {
+      // 1. Navigation between Home and Workspace
+      const brandMark = document.getElementById('brandMarkHome');
+      const btnBackArrow = document.getElementById('btnNavBack');
+      const btnFwdArrow = document.getElementById('btnNavForward');
+      const btnToggle = document.getElementById('btnHeaderViewToggle');
+      const btnRailBack = document.getElementById('btnBackToHomeFromRail');
+      const btnWsHomeReturn = document.getElementById('btnReturnHomeWorkspace');
+
+      if (brandMark) brandMark.onclick = () => setView('home');
+      if (btnBackArrow) btnBackArrow.onclick = () => setView('home');
+      if (btnFwdArrow) btnFwdArrow.onclick = () => setView('workspace');
+      if (btnRailBack) btnRailBack.onclick = () => setView('home');
+      if (btnWsHomeReturn) btnWsHomeReturn.onclick = () => setView('home');
+      if (btnToggle) {
+        btnToggle.onclick = () => {
+          setView(currentView === 'home' ? 'workspace' : 'home');
+        };
+      }
+
+      // Appropriate buttons on Home that switch to the 2nd Image Interface:
+      const btnHomeResume = document.getElementById('btnResume');
+      const btnHomeFiles = document.getElementById('btnHomeNavFiles');
+      const btnHomeRepoFs = document.getElementById('btnHomeRepoFsBroker');
+      const btnSubEditor = document.getElementById('btnSubcontextEditor');
+      const cardReviewPerm = document.getElementById('cardReviewPermission');
+      const cardStartPlan = document.getElementById('cardStartPlan');
+      const menuDiff = document.getElementById('menuOpenCodeDiff');
+
+      function jumpToWorkspace() {
+        setView('workspace');
+      }
+
+      if (btnHomeResume) {
+        btnHomeResume.onclick = () => {
+          if (activeTaskId) requestResume(activeTaskId);
+          jumpToWorkspace();
+        };
+      }
+      if (btnHomeFiles) btnHomeFiles.onclick = jumpToWorkspace;
+      if (btnHomeRepoFs) btnHomeRepoFs.onclick = jumpToWorkspace;
+      if (btnSubEditor) btnSubEditor.onclick = jumpToWorkspace;
+      if (cardReviewPerm) cardReviewPerm.onclick = jumpToWorkspace;
+      if (cardStartPlan) cardStartPlan.onclick = jumpToWorkspace;
+      if (menuDiff) {
+        menuDiff.onclick = () => {
+          closeHeadroom();
+          jumpToWorkspace();
+        };
+      }
+
+      // Headroom Popup in View 1
+      const btnHeadroom = document.getElementById('btnToggleHeadroom');
+      const popupHeadroom = document.getElementById('headroomPopup');
+      function closeHeadroom() {
+        if (popupHeadroom) popupHeadroom.style.display = 'none';
+      }
+      if (btnHeadroom && popupHeadroom) {
+        btnHeadroom.onclick = (e) => {
+          e.stopPropagation();
+          const visible = popupHeadroom.style.display === 'flex';
+          popupHeadroom.style.display = visible ? 'none' : 'flex';
+        };
+        document.addEventListener('click', (e) => {
+          if (!popupHeadroom.contains(e.target) && e.target !== btnHeadroom) {
+            closeHeadroom();
+          }
+        });
+      }
+
+      // Submit new goal from Home
+      const btnSubmitGoal = document.getElementById('btnSubmitHomeGoal');
+      const inputGoal = document.getElementById('homeGoalInput');
+      if (btnSubmitGoal && inputGoal) {
+        btnSubmitGoal.onclick = async () => {
+          const goal = inputGoal.value.trim();
+          if (!goal) {
+            inputGoal.focus();
+            return;
+          }
+          btnSubmitGoal.disabled = true;
+          btnSubmitGoal.textContent = 'Launching…';
+          try {
+            const created = await api('/api/tasks', {
+              method: 'POST',
+              body: JSON.stringify({ goal })
+            });
+            inputGoal.value = '';
+            activeTaskId = created.id;
+            await loadWorkspace();
+            jumpToWorkspace();
+          } catch (err) {
+            alert(`Could not start task: ${err.message}`);
+          } finally {
+            btnSubmitGoal.disabled = false;
+            btnSubmitGoal.textContent = 'Run Goal →';
+          }
+        };
+      }
+
+      // Workspace Execution Control Buttons
+      const btnPauseWs = document.getElementById('btnPauseWorkspace');
+      const btnResumeWs = document.getElementById('btnResumeWorkspace');
+      const btnPauseHidden = document.getElementById('btnPause');
+
+      if (btnPauseWs) btnPauseWs.onclick = () => requestPause(activeTaskId);
+      if (btnPauseHidden) btnPauseHidden.onclick = () => requestPause(activeTaskId);
+      if (btnResumeWs) btnResumeWs.onclick = () => requestResume(activeTaskId);
+
+      // Approval Card Actions
+      const btnApprove = document.getElementById('btnApproveAction');
+      const btnDeny = document.getElementById('btnDenyAction');
+      const approvalCard = document.getElementById('approvalCard');
+
+      if (btnApprove) {
+        btnApprove.onclick = () => {
+          addConsoleEntry('APPROVAL', 'Approval action unavailable: server approval endpoint is pending.', 'warn');
+        };
+      }
+      if (btnDeny) {
+        btnDeny.onclick = () => {
+          addConsoleEntry('APPROVAL', 'Denial action unavailable: server denial endpoint is pending.', 'warn');
+        };
+      }
+
+      // Clear Console Buttons
+      const btnClearHome = document.getElementById('btnClearHomeTerm');
+      const btnClearWs = document.getElementById('btnClearWorkspaceLogs');
+      if (btnClearHome) btnClearHome.onclick = () => { document.getElementById('homeTerminalBody').innerHTML = ''; };
+      if (btnClearWs) btnClearWs.onclick = () => { document.getElementById('consoleBody').innerHTML = ''; };
+
+      // Bootstrap
+      loadWorkspace();
+      connectSSE();
+      if (window.location.hash === '#workspace' || window.location.search.includes('workspace')) {
+        setView('workspace');
+      }
+    });
+  </script>
+</body>
+</html>
