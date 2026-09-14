@@ -195,7 +195,11 @@ function emit(type, payload) {
   } else if (type === 'recovery_required' && payload?.taskId) {
     bridge.onRecoveryRequired(payload.taskId, payload.reason);
   } else if (type === 'approval_required' && payload?.taskId) {
-    bridge.onApprovalRequired(payload.taskId, payload.message);
+    bridge.onApprovalRequired(
+      payload.taskId,
+      payload.approvalId,
+      payload.message
+    );
   }
 }
 
@@ -609,6 +613,134 @@ const server = createServer(async (request, response) => {
       return json(response, 200, { ok: true, status: result.status });
     }
 
+    const approvalMatch = url.pathname.match(
+      /^\/api\/approvals\/([^/]+)\/(approve|deny)$/
+    );
+
+    if (
+      request.method === 'POST' &&
+      approvalMatch
+    ) {
+      const approvalId = approvalMatch[1];
+      const decision = approvalMatch[2];
+
+      let body;
+      try {
+        body = await bodyOf(request);
+      } catch (error) {
+        return json(response, 400, {
+          error: error.message || 'Invalid request body.'
+        });
+      }
+
+      const approval = store?.getApprovalRequest?.(approvalId);
+
+      if (!approval) {
+        return json(response, 404, {
+          error: 'Approval request not found.'
+        });
+      }
+
+      if (
+        body.taskId !== undefined &&
+        body.taskId !== null &&
+        String(body.taskId) !== String(approval.taskId)
+      ) {
+        return json(response, 409, {
+          error: 'Approval request task binding mismatch.'
+        });
+      }
+
+      const taskId = String(approval.taskId);
+
+      const tasks = await getTasks();
+      const task = tasks.find(item => item.id === taskId);
+
+      if (!task) {
+        return json(response, 404, {
+          error: 'Approval request task not found.'
+        });
+      }
+
+      if (decision === 'deny') {
+        if (approval.status !== 'pending') {
+          return json(response, 409, {
+            error: `Approval request is already resolved with status "${approval.status}".`,
+            approval: store.getApprovalRequest(approvalId)
+          });
+        }
+
+        let resolved;
+        try {
+          resolved = store.resolveApprovalRequest(approvalId, {
+            status: 'denied',
+            resolutionReason: 'User denied the approval request.'
+          });
+        } catch (error) {
+          return json(response, 409, {
+            error: error.message || 'Approval request could not be denied.'
+          });
+        }
+
+        if (task.status === 'awaiting_approval') {
+          await orchestrator.updateTask(task, item => {
+            item.status = 'paused';
+            item.message = 'Approval denied. Task paused.';
+            orchestrator.checkpoint(
+              item,
+              'Approval denied'
+            );
+          });
+        }
+
+        return json(response, 200, {
+          ok: true,
+          decision: 'denied',
+          approval: resolved,
+          action: store.getToolAction(resolved.toolActionId)
+        });
+      }
+
+      if (approval.status === 'pending') {
+        try {
+          store.resolveApprovalRequest(approvalId, {
+            status: 'approved',
+            resolutionReason: 'User approved the approval request.'
+          });
+        } catch (error) {
+          return json(response, 409, {
+            error: error.message || 'Approval request could not be approved.'
+          });
+        }
+      } else if (
+        approval.status !== 'approved' &&
+        approval.status !== 'consumed'
+      ) {
+        return json(response, 409, {
+          error: `Approval request is not executable in status "${approval.status}".`,
+          approval: store.getApprovalRequest(approvalId)
+        });
+      }
+
+      let execution;
+      try {
+        execution = await orchestrator.executeApprovedAction({
+          approvalId,
+          taskId
+        });
+      } catch (error) {
+        return json(response, 409, {
+          error: error.message || 'Approved action could not be executed.'
+        });
+      }
+
+      return json(response, 200, {
+        ok: true,
+        decision: 'approved',
+        ...execution
+      });
+    }
+
     const match = url.pathname.match(
       /^\/api\/tasks\/([^/]+)\/continue$/
     );
@@ -625,6 +757,12 @@ const server = createServer(async (request, response) => {
       if (!task) {
         return json(response, 404, {
           error: 'Task not found.'
+        });
+      }
+
+      if (task.status === 'awaiting_approval') {
+        return json(response, 409, {
+          error: 'Task is awaiting approval. Approve or deny the pending approval request.'
         });
       }
 

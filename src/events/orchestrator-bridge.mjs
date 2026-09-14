@@ -34,7 +34,7 @@ import {
  *   onToolFailed(taskId, toolName, errorMessage): void,
  *   onModelSwitching(taskId, previousModel, targetModel, reason): void,
  *   onModelSwitched(taskId, previousModel, targetModel): void,
- *   onApprovalRequired(taskId, message): void,
+ *   onApprovalRequired(taskId, approvalId, message): void,
  *   onRecoveryRequired(taskId, reason): void,
  *   buildLegacyEmit(): function   – drop-in for the existing emit(type, payload)
  * }}
@@ -71,10 +71,6 @@ export function createOrchestratorBridge(eventEmitter) {
         });
       } else if (next === 'paused') {
         ee.emit(task.id, 'task_paused', {
-          message: String(task.message || '').slice(0, 500)
-        });
-      } else if (next === 'awaiting_approval') {
-        ee.emit(task.id, 'approval_required', {
           message: String(task.message || '').slice(0, 500)
         });
       }
@@ -114,8 +110,9 @@ export function createOrchestratorBridge(eventEmitter) {
       buildModelSwitchPayload(previousModel, targetModel, ''));
   }
 
-  function onApprovalRequired(taskId, message) {
+  function onApprovalRequired(taskId, approvalId, message) {
     ee.emit(taskId, 'approval_required', {
+      approvalId: String(approvalId || '').slice(0, 100),
       message: String(message || '').slice(0, 500)
     });
   }

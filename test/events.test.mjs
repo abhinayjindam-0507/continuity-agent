@@ -298,7 +298,11 @@ test('8. orchestrator bridge translates all lifecycle signals to typed stream ev
   // 6. Checkpoint created
   bridge.onCheckpointCreated('task-bridge-1', { id: 'cp-1', event: 'Step 1 done', status: 'running', step: 1, createdAt: 'now' });
   // 7. Approval required
-  bridge.onApprovalRequired('task-bridge-1', 'Please confirm write');
+  bridge.onApprovalRequired(
+    'task-bridge-1',
+    'approval-bridge-1',
+    'Please confirm write'
+  );
   // 8. Recovery required
   bridge.onRecoveryRequired('task-bridge-1', 'Checkpoint integrity mismatch');
   // 9. Task completed
@@ -316,6 +320,19 @@ test('8. orchestrator bridge translates all lifecycle signals to typed stream ev
   assert.ok(types.includes('tool_failed'));
   assert.ok(types.includes('checkpoint_created'));
   assert.ok(types.includes('approval_required'));
+
+  const approvalEvent = emittedEvents.find(
+    event => event.type === 'approval_required'
+  );
+
+  assert.equal(
+    approvalEvent?.data?.payload?.approvalId,
+    'approval-bridge-1'
+  );
+  assert.equal(
+    approvalEvent?.data?.payload?.message,
+    'Please confirm write'
+  );
   assert.ok(types.includes('recovery_required'));
   assert.ok(types.includes('task_completed'));
 });
