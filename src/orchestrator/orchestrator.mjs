@@ -367,7 +367,7 @@ export function createOrchestrator({
 
     if (!active) return;
 
-    const messages = [
+    const initialMessages = [
       {
         role: 'system',
         content:
@@ -383,6 +383,121 @@ export function createOrchestrator({
         content: active.goal
       }
     ];
+
+    const MAX_PERSISTED_MESSAGE_BYTES = 200 * 1024;
+
+    const truncateUtf8 = (value, maxBytes) => {
+      const bytes = Buffer.from(String(value), 'utf8');
+      if (bytes.length <= maxBytes) return String(value);
+
+      const truncated = bytes
+        .subarray(0, Math.max(0, maxBytes))
+        .toString('utf8');
+
+      return (
+        truncated +
+        '\n[continuity-agent: content truncated for durable resume]'
+      );
+    };
+
+    const boundPersistedMessage = message => {
+      const encoded = JSON.stringify(message);
+
+      if (
+        Buffer.byteLength(encoded, 'utf8') <=
+        MAX_PERSISTED_MESSAGE_BYTES
+      ) {
+        return message;
+      }
+
+      if (typeof message.content === 'string') {
+        const bounded = {
+          ...message,
+          content: truncateUtf8(
+            message.content,
+            MAX_PERSISTED_MESSAGE_BYTES - 1024
+          )
+        };
+
+        if (
+          Buffer.byteLength(JSON.stringify(bounded), 'utf8') <=
+          MAX_PERSISTED_MESSAGE_BYTES
+        ) {
+          return bounded;
+        }
+      }
+
+      if (Array.isArray(message.tool_calls)) {
+        const boundedCalls = message.tool_calls.map(call => {
+          const fn = call?.function;
+
+          if (!fn || typeof fn !== 'object') {
+            return call;
+          }
+
+          const rawArguments =
+            typeof fn.arguments === 'string'
+              ? fn.arguments
+              : JSON.stringify(fn.arguments ?? {});
+
+          return {
+            ...call,
+            function: {
+              ...fn,
+              arguments: truncateUtf8(rawArguments, 24 * 1024)
+            }
+          };
+        });
+
+        const bounded = {
+          ...message,
+          tool_calls: boundedCalls
+        };
+
+        if (
+          Buffer.byteLength(JSON.stringify(bounded), 'utf8') <=
+          MAX_PERSISTED_MESSAGE_BYTES
+        ) {
+          return bounded;
+        }
+      }
+
+      return {
+        role: message.role || 'assistant',
+        ...(message.tool_call_id
+          ? { tool_call_id: message.tool_call_id }
+          : {}),
+        content:
+          '[continuity-agent: message truncated for durable resume]'
+      };
+    };
+
+    const persistExecutionMessage = message => {
+      if (!store?.appendTaskMessage) return;
+
+      store.appendTaskMessage({
+        taskId,
+        message: boundPersistedMessage(message)
+      });
+    };
+
+    let messages;
+
+    if (store?.getTaskMessages) {
+      const persistedMessages = store.getTaskMessages(taskId);
+
+      if (persistedMessages.length > 0) {
+        messages = persistedMessages.map(item => item.message);
+      } else {
+        messages = [...initialMessages];
+
+        for (const initialMessage of initialMessages) {
+          persistExecutionMessage(initialMessage);
+        }
+      }
+    } else {
+      messages = [...initialMessages];
+    }
 
     let modelIndex = 0;
 
@@ -577,10 +692,13 @@ export function createOrchestrator({
       const message = reply.message || {};
 
       if (message.content) {
-        messages.push({
+        const assistantContentMessage = {
           role: 'assistant',
           content: message.content
-        });
+        };
+
+        messages.push(assistantContentMessage);
+        persistExecutionMessage(assistantContentMessage);
       }
 
       const calls = message.tool_calls || [];
@@ -609,10 +727,13 @@ export function createOrchestrator({
         return;
       }
 
-      messages.push({
+      const assistantToolCallMessage = {
         role: 'assistant',
         tool_calls: calls
-      });
+      };
+
+      messages.push(assistantToolCallMessage);
+      persistExecutionMessage(assistantToolCallMessage);
 
       for (const call of calls) {
         if (signal.aborted) {
@@ -643,11 +764,14 @@ export function createOrchestrator({
               replayedResult = completed.resultSummary;
             }
 
-            messages.push({
+            const replayedToolMessage = {
               role: 'tool',
               tool_call_id: call.id,
               content: JSON.stringify(replayedResult)
-            });
+            };
+
+            messages.push(replayedToolMessage);
+            persistExecutionMessage(replayedToolMessage);
 
             await updateTask(current, item => {
               item.steps.push({
@@ -859,11 +983,14 @@ export function createOrchestrator({
             detail: JSON.stringify(result).slice(0, 1200)
           });
 
-          messages.push({
+          const toolResultMessage = {
             role: 'tool',
             tool_call_id: call.id,
             content: JSON.stringify(result)
-          });
+          };
+
+          messages.push(toolResultMessage);
+          persistExecutionMessage(toolResultMessage);
 
           await updateTask(current, item => {
             item.steps.push({
@@ -912,13 +1039,16 @@ export function createOrchestrator({
             error: String(error.message).slice(0, 1000)
           });
 
-          messages.push({
+          const toolErrorMessage = {
             role: 'tool',
             tool_call_id: call.id,
             content: JSON.stringify({
               error: String(error.message)
             })
-          });
+          };
+
+          messages.push(toolErrorMessage);
+          persistExecutionMessage(toolErrorMessage);
 
           await updateTask(current, item => {
             item.steps.push({

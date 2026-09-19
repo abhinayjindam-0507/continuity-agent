@@ -492,8 +492,7 @@ export async function openStore(dataRoot) {
       if (existing) {
         if (
           existing.taskId !== normalizedTaskId ||
-          existing.message !== messageJson ||
-          existing.createdAt !== normalizedCreatedAt
+          existing.message !== messageJson
         ) {
           throw new Error(
             'Task message identity conflict: an existing message has different content.'

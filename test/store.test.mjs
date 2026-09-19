@@ -859,6 +859,171 @@ test('16. orchestrator integration records checkpoints with hashes, events, and 
   }
 });
 
+
+test('orchestrator resumes from persisted transcript after store restart', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+
+  try {
+    const store1 = await openStore(dir);
+
+    const task = {
+      id: 'orch-transcript-restart',
+      goal: 'Resume from durable conversation state',
+      status: 'queued',
+      message: 'Waiting to start.',
+      activeModel: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    };
+
+    store1.upsertTask(task);
+
+    let brokerExecutions = 0;
+
+    const orchestrator1 = createOrchestrator({
+      getTasks: async () => store1.getTasks(),
+      saveTasks: async tasks => store1.saveTasks(tasks),
+      getConfig: async () => ({
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 1,
+        allowedCommands: ['node']
+      }),
+      toolBrokerFactory: async () => ({
+        execute: async () => {
+          brokerExecutions += 1;
+          return { data: 'tool_output' };
+        }
+      }),
+      modelAdapter: async (_endpoint, _model, messages) => {
+        assert.equal(messages.length, 2);
+        assert.equal(messages[0].role, 'system');
+        assert.equal(messages[1].role, 'user');
+        assert.equal(
+          messages[1].content,
+          'Resume from durable conversation state'
+        );
+
+        return {
+          message: {
+            content: 'Running tool',
+            tool_calls: [
+              {
+                id: 'restart-call-1',
+                function: {
+                  name: 'list_files',
+                  arguments: { path: '.' }
+                }
+              }
+            ]
+          }
+        };
+      },
+      toolSpec: [],
+      projectRoot: dir,
+      emit: () => {},
+      store: store1
+    });
+
+    await orchestrator1.runTask(task.id);
+
+    assert.equal(brokerExecutions, 1);
+    assert.equal(store1.getTask(task.id).status, 'paused');
+
+    const persistedMessages = store1
+      .getTaskMessages(task.id)
+      .map(item => item.message);
+
+    assert.deepEqual(
+      persistedMessages.map(item => item.role),
+      ['system', 'user', 'assistant', 'assistant', 'tool']
+    );
+
+    assert.equal(
+      persistedMessages[3].tool_calls[0].id,
+      'restart-call-1'
+    );
+
+    assert.equal(
+      persistedMessages[4].tool_call_id,
+      'restart-call-1'
+    );
+
+    store1.close();
+
+    // Simulate process restart.
+    const store2 = await openStore(dir);
+    const recoveredTask = store2.getTask(task.id);
+
+    recoveredTask.status = 'queued';
+    recoveredTask.message = 'Queued after restart.';
+    recoveredTask.updatedAt = new Date().toISOString();
+    store2.upsertTask(recoveredTask);
+
+    let resumedMessages = null;
+
+    const orchestrator2 = createOrchestrator({
+      getTasks: async () => store2.getTasks(),
+      saveTasks: async tasks => store2.saveTasks(tasks),
+      getConfig: async () => ({
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 1,
+        allowedCommands: ['node']
+      }),
+      toolBrokerFactory: async () => ({
+        execute: async () => {
+          brokerExecutions += 1;
+          return { data: 'unexpected_second_tool_execution' };
+        }
+      }),
+      modelAdapter: async (_endpoint, _model, messages) => {
+        resumedMessages = messages;
+
+        assert.equal(messages.length, 5);
+        assert.equal(messages[0].role, 'system');
+        assert.equal(messages[1].role, 'user');
+        assert.equal(messages[2].role, 'assistant');
+        assert.equal(messages[3].role, 'assistant');
+        assert.equal(messages[3].tool_calls[0].id, 'restart-call-1');
+        assert.equal(messages[4].role, 'tool');
+        assert.equal(messages[4].tool_call_id, 'restart-call-1');
+
+        return {
+          message: {
+            content: 'Resumed successfully.',
+            tool_calls: []
+          }
+        };
+      },
+      toolSpec: [],
+      projectRoot: dir,
+      emit: () => {},
+      store: store2
+    });
+
+    await orchestrator2.runTask(task.id);
+
+    assert.ok(resumedMessages);
+    assert.equal(brokerExecutions, 1);
+    assert.equal(store2.getTask(task.id).status, 'completed');
+
+    const finalMessages = store2
+      .getTaskMessages(task.id)
+      .map(item => item.message);
+
+    assert.equal(finalMessages.at(-1).role, 'assistant');
+    assert.equal(finalMessages.at(-1).content, 'Resumed successfully.');
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('17. supplied invalid checkpoint hash is rejected by recordCheckpoint', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
   try {
