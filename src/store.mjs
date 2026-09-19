@@ -76,6 +76,7 @@ const MAX_CANONICAL_ARRAY_LEN = 50;
 const MAX_CANONICAL_STRING_LEN = 4000;
 const MAX_CANONICAL_KEYS = 50;
 
+const MAX_TASK_MESSAGE_BYTES = 256 * 1024;
 function hashSensitiveValue(val) {
   const digest = createHash('sha256').update(String(val), 'utf8').digest('hex');
   return `[REDACTED:sha256:${digest}]`;
@@ -183,6 +184,15 @@ export async function openStore(dataRoot) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS task_messages (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(task_id, sequence)
+    );
+
     CREATE TABLE IF NOT EXISTS task_events (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,
@@ -250,6 +260,8 @@ export async function openStore(dataRoot) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_task_events_task_id ON task_events(task_id);
+
+    CREATE INDEX IF NOT EXISTS idx_task_messages_task_id_sequence ON task_messages(task_id, sequence);
     CREATE INDEX IF NOT EXISTS idx_checkpoints_task_id ON checkpoints(task_id);
     CREATE INDEX IF NOT EXISTS idx_tool_actions_task_id ON tool_actions(task_id);
     CREATE INDEX IF NOT EXISTS idx_tool_actions_idempotency ON tool_actions(idempotency_key);
@@ -436,6 +448,148 @@ export async function openStore(dataRoot) {
     const row = database.prepare('SELECT payload FROM tasks WHERE id = ?').get(String(taskId));
     return row ? JSON.parse(row.payload) : null;
   }
+
+  function appendTaskMessage({
+    id = randomUUID(),
+    taskId,
+    message,
+    createdAt = new Date().toISOString()
+  }) {
+    if (!taskId) {
+      throw new Error('taskId is required for task message');
+    }
+
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+      throw new Error('message must be a non-array object');
+    }
+
+    const messageJson = JSON.stringify(message);
+
+    if (Buffer.byteLength(messageJson, 'utf8') > MAX_TASK_MESSAGE_BYTES) {
+      throw new Error(
+        `Task message exceeds maximum allowed size (${MAX_TASK_MESSAGE_BYTES} bytes).`
+      );
+    }
+
+    const normalizedTaskId = String(taskId);
+    const messageId = String(id);
+    const normalizedCreatedAt = String(createdAt);
+
+    database.exec('BEGIN IMMEDIATE');
+
+    try {
+      const existing = database.prepare(`
+        SELECT id,
+               task_id AS taskId,
+               sequence,
+               message,
+               created_at AS createdAt
+        FROM task_messages
+        WHERE id = ?
+        LIMIT 1
+      `).get(messageId);
+
+      if (existing) {
+        if (
+          existing.taskId !== normalizedTaskId ||
+          existing.message !== messageJson ||
+          existing.createdAt !== normalizedCreatedAt
+        ) {
+          throw new Error(
+            'Task message identity conflict: an existing message has different content.'
+          );
+        }
+
+        database.exec('COMMIT');
+
+        return {
+          id: existing.id,
+          taskId: existing.taskId,
+          sequence: existing.sequence,
+          message: JSON.parse(existing.message),
+          createdAt: existing.createdAt
+        };
+      }
+
+      const nextSequence = database.prepare(`
+        SELECT COALESCE(MAX(sequence), -1) + 1 AS nextSequence
+        FROM task_messages
+        WHERE task_id = ?
+      `).get(normalizedTaskId).nextSequence;
+
+      database.prepare(`
+        INSERT INTO task_messages (
+          id,
+          task_id,
+          sequence,
+          message,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(
+        messageId,
+        normalizedTaskId,
+        nextSequence,
+        messageJson,
+        normalizedCreatedAt
+      );
+
+      database.exec('COMMIT');
+
+      return {
+        id: messageId,
+        taskId: normalizedTaskId,
+        sequence: nextSequence,
+        message,
+        createdAt: normalizedCreatedAt
+      };
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  function getTaskMessages(taskId) {
+    if (!taskId) return [];
+
+    const rows = database.prepare(`
+      SELECT id,
+             task_id AS taskId,
+             sequence,
+             message,
+             created_at AS createdAt
+      FROM task_messages
+      WHERE task_id = ?
+      ORDER BY sequence ASC, rowid ASC
+    `).all(String(taskId));
+
+    return rows.map(row => {
+      let message;
+
+      try {
+        message = JSON.parse(row.message);
+      } catch {
+        throw new Error(
+          `Corrupted task message payload for "${row.id}".`
+        );
+      }
+
+      if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        throw new Error(
+          `Corrupted task message payload for "${row.id}".`
+        );
+      }
+
+      return {
+        id: row.id,
+        taskId: row.taskId,
+        sequence: row.sequence,
+        message,
+        createdAt: row.createdAt
+      };
+    });
+  }
+
+
 
   function upsertTask(task) {
     return upsertTaskInternal(task);
@@ -1338,6 +1492,9 @@ export async function openStore(dataRoot) {
     getTasks,
     saveTasks,
     getTask,
+
+    appendTaskMessage,
+    getTaskMessages,
     upsertTask,
     recordTaskEvent,
     getTaskEvents,

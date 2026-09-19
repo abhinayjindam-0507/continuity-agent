@@ -64,6 +64,138 @@ test('2. task persistence across close/reopen', async () => {
   }
 });
 
+
+test('durable task transcript persists ordered messages across close/reopen', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+
+  try {
+    const store1 = await openStore(dir);
+
+    const task = {
+      id: 'task-messages-1',
+      goal: 'Persist execution transcript',
+      status: 'running',
+      message: 'Running',
+      activeModel: 'qwen3:4b',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: []
+    };
+
+    store1.upsertTask(task);
+
+    const systemMessage = {
+      role: 'system',
+      content: 'Local-only agent instructions'
+    };
+
+    const assistantMessage = {
+      role: 'assistant',
+      tool_calls: [
+        {
+          id: 'call-1',
+          type: 'function',
+          function: {
+            name: 'read_file',
+            arguments: '{"path":"README.md"}'
+          }
+        }
+      ]
+    };
+
+    const toolMessage = {
+      role: 'tool',
+      tool_call_id: 'call-1',
+      content: '{"ok":true,"content":"hello"}'
+    };
+
+    assert.equal(
+      store1.appendTaskMessage({
+        id: 'msg-1',
+        taskId: task.id,
+        message: systemMessage
+      }).sequence,
+      0
+    );
+
+    assert.equal(
+      store1.appendTaskMessage({
+        id: 'msg-2',
+        taskId: task.id,
+        message: assistantMessage
+      }).sequence,
+      1
+    );
+
+    assert.equal(
+      store1.appendTaskMessage({
+        id: 'msg-3',
+        taskId: task.id,
+        message: toolMessage
+      }).sequence,
+      2
+    );
+
+    const replay = store1.appendTaskMessage({
+      id: 'msg-2',
+      taskId: task.id,
+      message: assistantMessage
+    });
+
+    assert.equal(replay.sequence, 1);
+
+    assert.deepEqual(
+      store1.getTaskMessages(task.id).map(item => item.message),
+      [systemMessage, assistantMessage, toolMessage]
+    );
+
+    store1.close();
+
+    const store2 = await openStore(dir);
+
+    assert.deepEqual(
+      store2.getTaskMessages(task.id).map(item => item.message),
+      [systemMessage, assistantMessage, toolMessage]
+    );
+
+    assert.deepEqual(
+      store2.getTaskMessages(task.id).map(item => item.sequence),
+      [0, 1, 2]
+    );
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('task transcript rejects oversized messages', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+
+  try {
+    const store = await openStore(dir);
+
+    assert.throws(
+      () => store.appendTaskMessage({
+        taskId: 'task-oversize',
+        message: {
+          role: 'assistant',
+          content: 'x'.repeat(300 * 1024)
+        }
+      }),
+      /exceeds maximum allowed size/
+    );
+
+    assert.deepEqual(store.getTaskMessages('task-oversize'), []);
+
+    store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+
 test('3. config persistence across close/reopen', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
   try {
