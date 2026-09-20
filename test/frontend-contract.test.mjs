@@ -382,3 +382,55 @@ test('7. frontend event handler resilience against missing optional fields', () 
   assert.equal(tasks[0].steps.length, 2);
   assert.equal(tasks[0].checkpoints.length, 1);
 });
+
+
+test('4g. approval UI uses the durable approval API and exact decision binding', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(
+    new URL('../src/index.html', import.meta.url),
+    'utf8'
+  );
+
+  assert.match(html, /id="approvalCard"/);
+  assert.match(html, /id="btnApproveAction"/);
+  assert.match(html, /id="btnDenyAction"/);
+  assert.match(html, /id="approvalArgs"/);
+  assert.match(html, /id="approvalActionId"/);
+
+  assert.match(html, /function loadTaskApproval\(taskId\)/);
+  assert.match(
+    html,
+    /`\/api\/tasks\/\$\{encodeURIComponent\(taskId\)\}\/approval`/
+  );
+
+  assert.match(html, /function resolveApproval\(decision\)/);
+  assert.match(
+    html,
+    /`\/api\/approvals\/\$\{encodeURIComponent\(approvalId\)\}\/\$\{decision === 'approve' \? 'approve' : 'deny'\}`/
+  );
+
+  assert.match(
+    html,
+    /body: JSON\.stringify\(\{ taskId \}\)/
+  );
+
+  assert.match(html, /scheduleApprovalRefresh\(taskId\)/);
+  assert.match(html, /loadTaskApproval\(activeTaskId\)/);
+  assert.match(html, /loadTaskApproval\(id\)/);
+  assert.match(html, /approval\.expired === true/);
+  assert.match(html, /activeApproval\?\.id === approvalId/);
+
+  assert.doesNotMatch(html, /Approval Required \(Preview • Workflow Pending\)/);
+  assert.doesNotMatch(html, /Approve Patch \(Pending API\)/);
+  assert.doesNotMatch(html, /Deny \(Pending API\)/);
+  assert.doesNotMatch(html, /Review Diff \(Preview\)/);
+
+  assert.match(
+    html,
+    /btnApprove\.onclick = \(\) => resolveApproval\('approve'\)/
+  );
+  assert.match(
+    html,
+    /btnDeny\.onclick = \(\) => resolveApproval\('deny'\)/
+  );
+});

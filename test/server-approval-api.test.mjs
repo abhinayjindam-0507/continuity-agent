@@ -204,6 +204,119 @@ after(async () => {
   await rm(projectDir, { recursive: true, force: true });
 });
 
+test('GET returns the current pending approval with bounded sanitized arguments', async () => {
+  const taskId = 'task-approval-read-api';
+  const approvalId = 'approval-read-api';
+
+  await seedTask(taskId);
+  await seedApproval({
+    id: approvalId,
+    taskId,
+    toolActionId: 'action-approval-read-api',
+    args: {
+      path: 'review.txt',
+      content: 'visible proposed content\n',
+      token: 'do-not-leak',
+      nested: {
+        apiKey: 'nested-secret'
+      }
+    }
+  });
+
+  const result = await request(
+    'GET',
+    `/api/tasks/${taskId}/approval`
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body?.source, 'sqlite');
+  assert.equal(result.body?.taskId, taskId);
+  assert.equal(result.body?.approval?.id, approvalId);
+  assert.equal(result.body?.approval?.status, 'pending');
+  assert.equal(result.body?.approval?.toolName, 'write_file');
+  assert.equal(result.body?.approval?.args?.path, 'review.txt');
+  assert.equal(
+    result.body?.approval?.args?.content,
+    'visible proposed content\n'
+  );
+  assert.equal(result.body?.approval?.args?.token, undefined);
+  assert.equal(result.body?.approval?.args?.nested?.apiKey, undefined);
+  assert.ok(!result.text.includes('do-not-leak'));
+  assert.ok(!result.text.includes('nested-secret'));
+});
+
+test('GET approval rejects an unknown task', async () => {
+  const result = await request(
+    'GET',
+    '/api/tasks/task-does-not-exist/approval'
+  );
+
+  assert.equal(result.status, 404);
+  assert.equal(result.body?.error, 'Task not found.');
+});
+
+test('GET approval exposes expired state without making it resolvable', async () => {
+  const taskId = 'task-approval-expired-read-api';
+
+  await seedStore.upsertTask({
+    id: taskId,
+    goal: 'Expired approval task',
+    status: 'awaiting_approval',
+    message: 'Approval required for write_file.',
+    activeModel: 'qwen3:4b',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    steps: [],
+    checkpoints: [],
+    switches: []
+  });
+
+  await seedApproval({
+    id: 'approval-expired-read-api',
+    taskId,
+    toolActionId: 'action-expired-read-api',
+    expiresAt: '2020-01-01T00:00:00.000Z'
+  });
+
+  const result = await request(
+    'GET',
+    `/api/tasks/${taskId}/approval`
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body?.approval?.status, 'pending');
+  assert.equal(result.body?.approval?.expired, true);
+  assert.equal(result.body?.approval?.canResolve, false);
+});
+
+test('GET approval reports when a task has no pending approval', async () => {
+  const taskId = 'task-approval-no-pending-api';
+
+  await seedStore.upsertTask({
+    id: taskId,
+    goal: 'No pending approval task',
+    status: 'paused',
+    message: 'Paused without approval.',
+    activeModel: 'qwen3:4b',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    steps: [],
+    checkpoints: [],
+    switches: []
+  });
+
+  const result = await request(
+    'GET',
+    `/api/tasks/${taskId}/approval`
+  );
+
+  assert.equal(result.status, 404);
+  assert.equal(
+    result.body?.error,
+    'No pending approval request for this task.'
+  );
+});
+
 test('approval route rejects unknown approval request', async () => {
   const result = await request(
     'POST',

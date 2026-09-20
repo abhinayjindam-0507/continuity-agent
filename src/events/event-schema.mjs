@@ -120,6 +120,41 @@ export function sanitizeTaskSnapshot(task) {
   };
 }
 
+export function sanitizeApprovalRequest(approval) {
+  if (!approval || typeof approval !== 'object') return null;
+
+  const expiresAtMs = Date.parse(String(approval.expiresAt || ''));
+  const expired =
+    !Number.isFinite(expiresAtMs) || Date.now() >= expiresAtMs;
+
+  return {
+    id: String(approval.id || '').slice(0, 100),
+    taskId: String(approval.taskId || '').slice(0, 100),
+    toolActionId: String(approval.toolActionId || '').slice(0, 100),
+    toolName: String(approval.toolName || '').slice(0, 100),
+    argumentsHash: String(approval.argumentsHash || '').slice(0, 64),
+    status: String(approval.status || '').slice(0, 30),
+    expired,
+    canResolve: approval.status === 'pending' && !expired,
+    createdAt: String(approval.createdAt || '').slice(0, 50),
+    expiresAt: String(approval.expiresAt || '').slice(0, 50),
+    resolvedAt:
+      approval.resolvedAt === null || approval.resolvedAt === undefined
+        ? null
+        : String(approval.resolvedAt).slice(0, 50),
+    resolutionReason:
+      approval.resolutionReason === null ||
+      approval.resolutionReason === undefined
+        ? null
+        : String(approval.resolutionReason).slice(0, 500),
+    args: stripSensitiveKeys(
+      approval.args && typeof approval.args === 'object'
+        ? approval.args
+        : {}
+    )
+  };
+}
+
 export const MAX_TRANSCRIPT_MESSAGES = 50;
 
 const MAX_TRANSCRIPT_CONTENT = 4000;

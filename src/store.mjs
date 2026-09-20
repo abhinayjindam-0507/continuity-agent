@@ -1103,6 +1103,34 @@ export async function openStore(dataRoot) {
     return parseApprovalRow(row);
   }
 
+  function getPendingApprovalRequestForTask(taskId) {
+    if (!taskId) return null;
+
+    const row = database.prepare(`
+      SELECT id,
+             task_id AS taskId,
+             tool_action_id AS toolActionId,
+             tool_name AS toolName,
+             arguments,
+             arguments_hash AS argumentsHash,
+             status,
+             created_at AS createdAt,
+             expires_at AS expiresAt,
+             resolved_at AS resolvedAt,
+             resolution_reason AS resolutionReason
+      FROM approval_requests
+      WHERE task_id = ?
+        AND status = 'pending'
+      ORDER BY
+        CASE WHEN expires_at > ? THEN 0 ELSE 1 END,
+        created_at DESC,
+        id DESC
+      LIMIT 1
+    `).get(String(taskId), new Date().toISOString());
+
+    return parseApprovalRow(row);
+  }
+
   function resolveApprovalRequest(id, {
     status,
     resolvedAt = new Date().toISOString(),
@@ -1757,6 +1785,7 @@ export async function openStore(dataRoot) {
     createApprovalRequest,
     getApprovalRequest,
     getApprovalRequestByToolAction,
+    getPendingApprovalRequestForTask,
     resolveApprovalRequest,
     consumeApprovalRequest,
     completeToolActionWithEvidence,

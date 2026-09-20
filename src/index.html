@@ -2131,33 +2131,40 @@
         </div>
 
         <div class="engine-scroll-body">
-          <!-- CARD 1: APPROVAL REQUIRED (Preview — workflow pending backend endpoint) -->
-          <div id="approvalCard" class="approval-box">
-            <div style="display: flex; align-items: center; justify-content: space-between;">
-              <span class="approval-pill">Approval Required (Preview • Workflow Pending)</span>
-              <span style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono)">Action #A-891</span>
+          <!-- CARD 1: DURABLE APPROVAL -->
+          <div id="approvalCard" class="approval-box" style="display: none;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+              <span class="approval-pill" id="approvalPill">Approval Required</span>
+              <span id="approvalActionId" style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono)">—</span>
             </div>
 
-            <div style="font-size: 12.5px; font-weight: 700; color: #ffffff;">
-              Grant Whitelist Patch in Permission Policy
+            <div id="approvalTitle" style="font-size: 12.5px; font-weight: 700; color: #ffffff;">
+              Human approval required
             </div>
 
-            <div style="font-size: 11px; color: var(--text-secondary); line-height: 1.4;">
-              Agent detected 2 custom volume mounts requiring elevated read access to complete path resolution without crashing root sandbox.
+            <div id="approvalReason" style="font-size: 11px; color: var(--text-secondary); line-height: 1.4;">
+              The task is waiting for approval before executing the persisted mutation.
             </div>
 
             <div style="background: #060910; border: 1px solid var(--border-subtle); border-radius: 5px; padding: 7px 9px; font-family: var(--font-mono); font-size: 10.5px;">
-              <div style="color: var(--text-muted); font-size: 10px;">Target: src/broker/permission_policy.ts:88</div>
-              <div style="color: var(--emerald-soft);">Change: + whitelist.allow('/mnt/continuity-cache')</div>
+              <div id="approvalTarget" style="color: var(--text-muted); font-size: 10px;">Target: —</div>
+              <pre id="approvalArgs" style="margin: 6px 0 0; color: var(--emerald-soft); white-space: pre-wrap; word-break: break-word; font: inherit;">{}</pre>
             </div>
 
+            <div id="approvalMeta" style="font-size: 9.5px; color: var(--text-dim); font-family: var(--font-mono); margin-top: 4px;">
+              Expires: —
+            </div>
+
+            <div id="approvalStatusMessage" style="display: none; font-size: 10.5px; color: var(--text-secondary); line-height: 1.4; margin-top: 4px;"></div>
+
             <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px;">
-              <button class="btn-approve-primary" id="btnApproveAction" disabled title="Approval resolution endpoint is not yet implemented on the server" style="opacity: 0.5; cursor: not-allowed;">
+              <button class="btn-approve-primary" id="btnApproveAction" type="button" disabled>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                <span>Approve Patch (Pending API)</span>
+                <span id="btnApproveActionText">Approve</span>
               </button>
-              <button class="btn-sync" style="flex: 1; padding: 6px; opacity: 0.5; cursor: not-allowed;" id="btnReviewAction" disabled title="Diff review is preview only">Review Diff (Preview)</button>
-              <button class="btn-sync" style="flex: 1; padding: 6px; opacity: 0.5; cursor: not-allowed;" id="btnDenyAction" disabled title="Denial endpoint is not yet implemented on the server">Deny (Pending API)</button>
+              <button class="btn-sync" id="btnDenyAction" type="button" disabled style="flex: 1; padding: 6px;">
+                <span id="btnDenyActionText">Deny</span>
+              </button>
             </div>
           </div>
 
@@ -2343,6 +2350,260 @@
 
     let workspaceLogView = 'activity';
     let transcriptRefreshTimer = null;
+    let activeApproval = null;
+    let approvalLoadToken = 0;
+    let approvalRefreshTimer = null;
+    let approvalExpiryTimer = null;
+    let approvalActionBusy = false;
+
+    function renderApprovalStatus(message, level = 'info') {
+      const card = document.getElementById('approvalCard');
+      const statusEl = document.getElementById('approvalStatusMessage');
+      const approve = document.getElementById('btnApproveAction');
+      const deny = document.getElementById('btnDenyAction');
+
+      if (!card || !statusEl) return;
+
+      card.style.display = 'block';
+      statusEl.style.display = 'block';
+      statusEl.style.color =
+        level === 'error'
+          ? 'var(--rose-soft)'
+          : level === 'success'
+            ? 'var(--emerald-soft)'
+            : 'var(--text-secondary)';
+      statusEl.textContent = message;
+
+      if (approve) approve.disabled = true;
+      if (deny) deny.disabled = true;
+    }
+
+    function renderApprovalCard(approval) {
+      const card = document.getElementById('approvalCard');
+      if (!card) return;
+
+      clearTimeout(approvalExpiryTimer);
+      activeApproval = approval || null;
+
+      if (!approval) {
+        card.style.display = 'none';
+        approvalActionBusy = false;
+        return;
+      }
+
+      const pill = document.getElementById('approvalPill');
+      const actionId = document.getElementById('approvalActionId');
+      const title = document.getElementById('approvalTitle');
+      const reason = document.getElementById('approvalReason');
+      const target = document.getElementById('approvalTarget');
+      const argsEl = document.getElementById('approvalArgs');
+      const meta = document.getElementById('approvalMeta');
+      const statusMessage = document.getElementById('approvalStatusMessage');
+      const approve = document.getElementById('btnApproveAction');
+      const deny = document.getElementById('btnDenyAction');
+      const approveText = document.getElementById('btnApproveActionText');
+      const denyText = document.getElementById('btnDenyActionText');
+
+      card.style.display = 'block';
+
+      if (pill) pill.textContent = 'Approval Required';
+      if (actionId) actionId.textContent = approval.toolActionId || approval.id || '—';
+
+      if (title) {
+        title.textContent = `Approve ${approval.toolName || 'proposed mutation'}`;
+      }
+
+      if (reason) {
+        reason.textContent =
+          'Review the exact persisted action below. Approval executes only the server-side action bound to this request.';
+      }
+
+      const args =
+        approval.args &&
+        typeof approval.args === 'object' &&
+        !Array.isArray(approval.args)
+          ? approval.args
+          : {};
+
+      const targetPath =
+        typeof args.path === 'string' && args.path
+          ? args.path
+          : 'Persisted action arguments';
+
+      if (target) target.textContent = `Target: ${targetPath}`;
+
+      if (argsEl) {
+        try {
+          argsEl.textContent = JSON.stringify(args, null, 2);
+        } catch {
+          argsEl.textContent = '[arguments unavailable]';
+        }
+      }
+
+      const expired =
+        approval.expired === true ||
+        approval.canResolve === false;
+
+      if (meta) {
+        const hash = String(approval.argumentsHash || '');
+        meta.textContent =
+          `${expired ? 'Expired:' : 'Expires:'} ${fmtTime(approval.expiresAt) || '—'} · Args SHA-256: ${hash ? hash.slice(0, 12) : '—'}`;
+      }
+
+      if (statusMessage) {
+        statusMessage.style.display = expired ? 'block' : 'none';
+        statusMessage.style.color = expired
+          ? 'var(--rose-soft)'
+          : 'var(--text-secondary)';
+        statusMessage.textContent = expired
+          ? 'This approval has expired. The task requires a recovery decision before another mutation can execute.'
+          : '';
+      }
+
+      if (approve) {
+        approve.disabled = approvalActionBusy || expired;
+      }
+      if (deny) {
+        deny.disabled = approvalActionBusy || expired;
+      }
+      if (approveText) {
+        approveText.textContent =
+          approvalActionBusy ? 'Working…' : expired ? 'Expired' : 'Approve';
+      }
+      if (denyText) {
+        denyText.textContent =
+          approvalActionBusy ? 'Working…' : expired ? 'Expired' : 'Deny';
+      }
+
+      const expiresAtMs = Date.parse(String(approval.expiresAt || ''));
+      if (
+        approval.status === 'pending' &&
+        Number.isFinite(expiresAtMs) &&
+        expiresAtMs > Date.now()
+      ) {
+        approvalExpiryTimer = setTimeout(() => {
+          if (
+            activeTaskId === approval.taskId &&
+            activeApproval?.id === approval.id
+          ) {
+            loadTaskApproval(approval.taskId);
+          }
+        }, Math.min(expiresAtMs - Date.now() + 25, 2147483647));
+      }
+    }
+
+    async function loadTaskApproval(taskId) {
+      const token = ++approvalLoadToken;
+
+      if (!taskId) {
+        renderApprovalCard(null);
+        return;
+      }
+
+      try {
+        const data = await api(
+          `/api/tasks/${encodeURIComponent(taskId)}/approval`
+        );
+
+        if (token !== approvalLoadToken || taskId !== activeTaskId) return;
+
+        renderApprovalCard(data?.approval || null);
+      } catch (err) {
+        if (token !== approvalLoadToken || taskId !== activeTaskId) return;
+
+        if (err.statusCode === 404) {
+          renderApprovalCard(null);
+          return;
+        }
+
+        activeApproval = null;
+        renderApprovalStatus(
+          'Approval status is temporarily unavailable. Retry when the local backend is reachable.',
+          'error'
+        );
+        addConsoleEntry('APPROVAL', 'Could not load durable approval state.', 'error');
+      }
+    }
+
+    function scheduleApprovalRefresh(taskId) {
+      if (!taskId || taskId !== activeTaskId) return;
+
+      clearTimeout(approvalRefreshTimer);
+      approvalRefreshTimer = setTimeout(() => {
+        loadTaskApproval(taskId);
+      }, 120);
+    }
+
+    async function resolveApproval(decision) {
+      if (
+        approvalActionBusy ||
+        !activeApproval ||
+        activeApproval.status !== 'pending'
+      ) {
+        return;
+      }
+
+      const approvalId = String(activeApproval.id || '');
+      const taskId = String(activeApproval.taskId || '');
+
+      if (!approvalId || !taskId || taskId !== String(activeTaskId || '')) {
+        return;
+      }
+
+      approvalActionBusy = true;
+      renderApprovalCard(activeApproval);
+
+      try {
+        const result = await api(
+          `/api/approvals/${encodeURIComponent(approvalId)}/${decision === 'approve' ? 'approve' : 'deny'}`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ taskId })
+          }
+        );
+
+        addConsoleEntry(
+          'APPROVAL',
+          decision === 'approve'
+            ? 'Approval accepted. Executing the exact persisted mutation.'
+            : 'Approval denied. Task remains paused.',
+          decision === 'approve' ? 'success' : 'warn'
+        );
+
+        if (
+          taskId === String(activeTaskId || '') &&
+          activeApproval?.id === approvalId
+        ) {
+          renderApprovalCard(null);
+          await reconcileSnapshot(taskId);
+
+          if (workspaceLogView === 'transcript') {
+            loadTaskTranscript(taskId);
+          }
+        }
+
+        return result;
+      } catch (err) {
+        approvalActionBusy = false;
+
+        await loadTaskApproval(taskId);
+
+        addConsoleEntry(
+          'APPROVAL',
+          `Could not ${decision === 'approve' ? 'approve' : 'deny'} approval: ${err.message}`,
+          'error'
+        );
+      } finally {
+        approvalActionBusy = false;
+
+        if (
+          activeApproval &&
+          taskId === String(activeTaskId || '')
+        ) {
+          renderApprovalCard(activeApproval);
+        }
+      }
+    }
 
     function renderTaskTranscript(data) {
       const body = document.getElementById('transcriptBody');
@@ -2662,6 +2923,7 @@ ${esc(args)}</div>`;
         }
 
         renderTasks();
+        await loadTaskApproval(taskId);
         addConsoleEntry('SNAPSHOT', `Reconciled snapshot for ${taskId.slice(0, 8)} (currentSeq: ${res.currentSeq})`, 'info');
       } catch (err) {
         addConsoleEntry('SNAPSHOT', `Snapshot fetch failed: ${err.message}`, 'error');
@@ -2817,6 +3079,9 @@ ${esc(args)}</div>`;
         }
         case 'approval_required': {
           addConsoleEntry('APPROVAL', `Authorization needed: ${payload.message}`, 'warn');
+          if (taskId === activeTaskId) {
+            scheduleApprovalRefresh(taskId);
+          }
           break;
         }
         case 'recovery_required': {
@@ -2824,6 +3089,20 @@ ${esc(args)}</div>`;
           reconcileSnapshot(taskId);
           break;
         }
+      }
+
+      if (
+        taskId === activeTaskId &&
+        (
+          type === 'task_updated' ||
+          type === 'task_state_changed' ||
+          type === 'task_paused' ||
+          type === 'task_completed' ||
+          type === 'task_failed' ||
+          type === 'recovery_required'
+        )
+      ) {
+        scheduleApprovalRefresh(taskId);
       }
 
       renderTasks();
@@ -2953,6 +3232,7 @@ ${esc(args)}</div>`;
     function selectTask(id) {
       activeTaskId = id;
       renderTasks();
+      loadTaskApproval(id);
       if (workspaceLogView === 'transcript') {
         loadTaskTranscript(id);
       }
@@ -3361,6 +3641,7 @@ ${esc(args)}</div>`;
         }
 
         renderTasks();
+        await loadTaskApproval(activeTaskId);
         addConsoleEntry('SYSTEM', 'Connected to SQLite backend & model catalog', 'info');
       } catch (err) {
         addConsoleEntry('SYSTEM', `Sync failed: ${err.message}`, 'error');
@@ -3480,17 +3761,12 @@ ${esc(args)}</div>`;
       // Approval Card Actions
       const btnApprove = document.getElementById('btnApproveAction');
       const btnDeny = document.getElementById('btnDenyAction');
-      const approvalCard = document.getElementById('approvalCard');
 
       if (btnApprove) {
-        btnApprove.onclick = () => {
-          addConsoleEntry('APPROVAL', 'Approval action unavailable: server approval endpoint is pending.', 'warn');
-        };
+        btnApprove.onclick = () => resolveApproval('approve');
       }
       if (btnDeny) {
-        btnDeny.onclick = () => {
-          addConsoleEntry('APPROVAL', 'Denial action unavailable: server denial endpoint is pending.', 'warn');
-        };
+        btnDeny.onclick = () => resolveApproval('deny');
       }
 
       // Clear Console Buttons

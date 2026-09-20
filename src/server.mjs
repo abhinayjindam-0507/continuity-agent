@@ -19,6 +19,7 @@ import { createEventEmitter } from './events/event-emitter.mjs';
 import { createOrchestratorBridge } from './events/orchestrator-bridge.mjs';
 import {
   MAX_TRANSCRIPT_MESSAGES,
+  sanitizeApprovalRequest,
   sanitizeTaskSnapshot,
   sanitizeTaskTranscriptMessage
 } from './events/event-schema.mjs';
@@ -790,6 +791,48 @@ const server = createServer(async (request, response) => {
       return json(response, 200, {
         task: sanitizeTaskSnapshot(found),
         currentSeq: eventEmitter.getLatestSeq(),
+        source: 'sqlite'
+      });
+    }
+
+    // GET /api/tasks/:id/approval
+    // Returns the currently pending durable approval for one task.
+    // Read-only: mutation arguments are never accepted from the client.
+    const taskApprovalMatch = url.pathname.match(
+      /^\/api\/tasks\/([^/]+)\/approval$/
+    );
+    if (
+      request.method === 'GET' &&
+      taskApprovalMatch
+    ) {
+      const taskId = taskApprovalMatch[1];
+      const allTasks = await getTasks();
+      const found = allTasks.find(task => task.id === taskId);
+
+      if (!found) {
+        return json(response, 404, {
+          error: 'Task not found.'
+        });
+      }
+
+      let approval;
+      try {
+        approval = store.getPendingApprovalRequestForTask(taskId);
+      } catch {
+        return json(response, 500, {
+          error: 'Approval request could not be read safely.'
+        });
+      }
+
+      if (!approval) {
+        return json(response, 404, {
+          error: 'No pending approval request for this task.'
+        });
+      }
+
+      return json(response, 200, {
+        taskId,
+        approval: sanitizeApprovalRequest(approval),
         source: 'sqlite'
       });
     }
