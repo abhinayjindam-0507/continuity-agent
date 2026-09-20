@@ -17,7 +17,11 @@ import { createCapabilityRegistry } from './router/capability-registry.mjs';
 import { createModelRouter } from './router/model-router.mjs';
 import { createEventEmitter } from './events/event-emitter.mjs';
 import { createOrchestratorBridge } from './events/orchestrator-bridge.mjs';
-import { sanitizeTaskSnapshot } from './events/event-schema.mjs';
+import {
+  MAX_TRANSCRIPT_MESSAGES,
+  sanitizeTaskSnapshot,
+  sanitizeTaskTranscriptMessage
+} from './events/event-schema.mjs';
 
 const appRoot = resolve(process.cwd());
 // DATA_ROOT is a server-configuration override (used by hermetic tests); the
@@ -786,6 +790,58 @@ const server = createServer(async (request, response) => {
       return json(response, 200, {
         task: sanitizeTaskSnapshot(found),
         currentSeq: eventEmitter.getLatestSeq(),
+        source: 'sqlite'
+      });
+    }
+
+    // GET /api/tasks/:id/transcript?limit=N
+    // Returns a bounded, sanitized read-only durable execution transcript.
+    const transcriptMatch = url.pathname.match(
+      /^\/api\/tasks\/([^/]+)\/transcript$/
+    );
+    if (
+      request.method === 'GET' &&
+      transcriptMatch
+    ) {
+      const taskId = transcriptMatch[1];
+      const allTasks = await getTasks();
+      const found = allTasks.find(t => t.id === taskId);
+
+      if (!found) {
+        return json(response, 404, {
+          error: 'Task not found.'
+        });
+      }
+
+      const requestedLimit = Number.parseInt(
+        url.searchParams.get('limit') || '',
+        10
+      );
+
+      const limit =
+        Number.isInteger(requestedLimit) && requestedLimit > 0
+          ? Math.min(requestedLimit, MAX_TRANSCRIPT_MESSAGES)
+          : MAX_TRANSCRIPT_MESSAGES;
+
+      let persistedMessages;
+
+      try {
+        persistedMessages = store.getTaskMessages(taskId);
+      } catch {
+        return json(response, 500, {
+          error: 'Task transcript could not be read safely.'
+        });
+      }
+
+      const totalCount = persistedMessages.length;
+      const selected = persistedMessages.slice(-limit);
+
+      return json(response, 200, {
+        taskId,
+        messages: selected.map(sanitizeTaskTranscriptMessage),
+        returnedCount: selected.length,
+        totalCount,
+        truncated: totalCount > selected.length,
         source: 'sqlite'
       });
     }

@@ -390,6 +390,158 @@ test('continue route fails closed before creating a new checkpoint when the late
   );
 });
 
+test('transcript route returns bounded sanitized durable messages', async () => {
+  const taskId = 'task-transcript-api';
+  const now = '2026-01-01T01:00:00.000Z';
+
+  await seedStore.upsertTask({
+    id: taskId,
+    goal: 'Transcript API verification task',
+    status: 'paused',
+    message: 'Paused',
+    activeModel: 'qwen3:4b',
+    createdAt: now,
+    updatedAt: now,
+    steps: [],
+    checkpoints: [],
+    switches: []
+  });
+
+  seedStore.appendTaskMessage({
+    id: 'transcript-api-1',
+    taskId,
+    createdAt: now,
+    message: {
+      role: 'user',
+      content: 'First user message'
+    }
+  });
+
+  seedStore.appendTaskMessage({
+    id: 'transcript-api-2',
+    taskId,
+    createdAt: now,
+    message: {
+      role: 'assistant',
+      tool_calls: [
+        {
+          id: 'call-1',
+          type: 'function',
+          function: {
+            name: 'read_file',
+            arguments: JSON.stringify({
+              path: 'src/index.html',
+              apiKey: 'must-not-leak'
+            })
+          }
+        }
+      ]
+    }
+  });
+
+  seedStore.appendTaskMessage({
+    id: 'transcript-api-3',
+    taskId,
+    createdAt: now,
+    message: {
+      role: 'tool',
+      tool_call_id: 'call-1',
+      content: 'tool-result'
+    }
+  });
+
+  const result = await request(
+    'GET',
+    `/api/tasks/${taskId}/transcript?limit=2`
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body?.taskId, taskId);
+  assert.equal(result.body?.source, 'sqlite');
+  assert.equal(result.body?.totalCount, 3);
+  assert.equal(result.body?.returnedCount, 2);
+  assert.equal(result.body?.truncated, true);
+  assert.equal(result.body?.messages?.length, 2);
+
+  assert.equal(
+    result.body.messages[0].message.role,
+    'assistant'
+  );
+  assert.equal(
+    result.body.messages[0].message.tool_calls[0].id,
+    'call-1'
+  );
+  assert.equal(
+    result.body.messages[0].message.tool_calls[0].function.name,
+    'read_file'
+  );
+  assert.doesNotMatch(
+    result.body.messages[0].message.tool_calls[0].function.arguments,
+    /apiKey|must-not-leak/
+  );
+
+  assert.equal(
+    result.body.messages[1].message.role,
+    'tool'
+  );
+  assert.equal(
+    result.body.messages[1].message.tool_call_id,
+    'call-1'
+  );
+});
+
+test('transcript route redacts malformed tool arguments', async () => {
+  const malformedTaskId = 'task-transcript-api-malformed';
+  const now = '2026-01-01T01:00:00.000Z';
+
+  await seedStore.upsertTask({
+    id: malformedTaskId,
+    goal: 'Malformed transcript verification task',
+    status: 'paused',
+    message: 'Paused',
+    activeModel: 'qwen3:4b',
+    createdAt: now,
+    updatedAt: now,
+    steps: [],
+    checkpoints: [],
+    switches: []
+  });
+
+  seedStore.appendTaskMessage({
+    id: 'transcript-api-malformed-1',
+    taskId: malformedTaskId,
+    createdAt: now,
+    message: {
+      role: 'assistant',
+      tool_calls: [
+        {
+          id: 'call-malformed',
+          type: 'function',
+          function: {
+            name: 'run_command',
+            arguments: 'apiKey=must-not-leak'
+          }
+        }
+      ]
+    }
+  });
+
+  const malformedResult = await request(
+    'GET',
+    `/api/tasks/${malformedTaskId}/transcript`
+  );
+
+  assert.equal(malformedResult.status, 200);
+  assert.equal(
+    malformedResult.body?.messages?.[0]?.message?.tool_calls?.[0]?.function?.arguments,
+    '[continuity-agent: tool arguments redacted]'
+  );
+  assert.doesNotMatch(
+    malformedResult.body?.messages?.[0]?.message?.tool_calls?.[0]?.function?.arguments || '',
+    /must-not-leak/
+  );
+});
+
 test('continue route does not bypass awaiting approval', async () => {
   const continueTaskId = 'task-approval-continue-api';
 

@@ -120,6 +120,101 @@ export function sanitizeTaskSnapshot(task) {
   };
 }
 
+export const MAX_TRANSCRIPT_MESSAGES = 50;
+
+const MAX_TRANSCRIPT_CONTENT = 4000;
+const MAX_TRANSCRIPT_TOOL_CALLS = 10;
+const MAX_TRANSCRIPT_TOOL_CALL_STRING = 2400;
+
+export function sanitizeTaskTranscriptMessage(record) {
+  if (!record || typeof record !== 'object') return {};
+
+  const message =
+    record.message &&
+    typeof record.message === 'object' &&
+    !Array.isArray(record.message)
+      ? record.message
+      : {};
+
+  const safeMessage = {
+    role: String(message.role || '').slice(0, 30)
+  };
+
+  if (typeof message.content === 'string') {
+    safeMessage.content = message.content.slice(0, MAX_TRANSCRIPT_CONTENT);
+  }
+
+  if (typeof message.tool_call_id === 'string') {
+    safeMessage.tool_call_id =
+      message.tool_call_id.slice(0, 200);
+  }
+
+  if (Array.isArray(message.tool_calls)) {
+    safeMessage.tool_calls = message.tool_calls
+      .slice(0, MAX_TRANSCRIPT_TOOL_CALLS)
+      .map(call => {
+        if (!call || typeof call !== 'object' || Array.isArray(call)) {
+          return {};
+        }
+
+        const safeCall = {
+          id: typeof call.id === 'string'
+            ? call.id.slice(0, 200)
+            : '',
+          type: typeof call.type === 'string'
+            ? call.type.slice(0, 50)
+            : ''
+        };
+
+        if (
+          call.function &&
+          typeof call.function === 'object' &&
+          !Array.isArray(call.function)
+        ) {
+          const safeFunction = {
+            name: typeof call.function.name === 'string'
+              ? call.function.name.slice(0, 200)
+              : ''
+          };
+
+          if (typeof call.function.arguments === 'string') {
+            try {
+              const parsed = JSON.parse(call.function.arguments);
+              safeFunction.arguments = JSON.stringify(
+                stripSensitiveKeys(parsed)
+              ).slice(0, MAX_TRANSCRIPT_TOOL_CALL_STRING);
+            } catch {
+              safeFunction.arguments =
+                '[continuity-agent: tool arguments redacted]';
+            }
+          } else if (
+            call.function.arguments &&
+            typeof call.function.arguments === 'object' &&
+            !Array.isArray(call.function.arguments)
+          ) {
+            safeFunction.arguments = JSON.stringify(
+              stripSensitiveKeys(call.function.arguments)
+            ).slice(0, MAX_TRANSCRIPT_TOOL_CALL_STRING);
+          }
+
+          safeCall.function = safeFunction;
+        }
+
+        return safeCall;
+      });
+  }
+
+  return {
+    id: String(record.id || '').slice(0, 100),
+    taskId: String(record.taskId || '').slice(0, 100),
+    sequence: Number.isInteger(record.sequence)
+      ? record.sequence
+      : 0,
+    createdAt: String(record.createdAt || '').slice(0, 50),
+    message: safeMessage
+  };
+}
+
 export function sanitizeCheckpointPayload(cp) {
   if (!cp || typeof cp !== 'object') return {};
   return {
