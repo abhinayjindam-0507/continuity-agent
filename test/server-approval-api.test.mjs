@@ -679,3 +679,186 @@ test('continue route does not bypass awaiting approval', async () => {
 
   assert.equal(after?.status, 'awaiting_approval');
 });
+
+
+test('recovery route returns bounded sanitized needs_verification actions', async () => {
+  const taskId = 'task-recovery-api-sanitized';
+  const actionId = 'action-recovery-api-sanitized';
+
+  await seedTask(taskId);
+
+  seedStore.recordToolAction({
+    id: actionId,
+    idempotencyKey: 'recovery-api-sanitized-key',
+    taskId,
+    toolName: 'write_file',
+    args: {
+      path: 'recovery.txt',
+      content: 'safe recovery content',
+      token: 'TOP-SECRET-TOKEN',
+      nested: {
+        apiKey: 'TOP-SECRET-API-KEY'
+      }
+    },
+    status: 'needs_verification',
+    finishedAt: new Date().toISOString(),
+    error: 'Tool execution failed before durable success was recorded.'
+  });
+
+  const result = await request(
+    'GET',
+    `/api/tasks/${taskId}/recovery`
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body?.ok, true);
+  assert.equal(result.body?.source, 'sqlite');
+  assert.equal(result.body?.taskId, taskId);
+  assert.equal(result.body?.count, 1);
+  assert.equal(result.body?.truncated, false);
+
+  const action = result.body?.actions?.[0];
+  assert.equal(action?.id, actionId);
+  assert.equal(action?.taskId, taskId);
+  assert.equal(action?.toolName, 'write_file');
+  assert.equal(action?.status, 'needs_verification');
+  assert.equal(action?.hasError, true);
+  assert.equal(
+    action?.reason,
+    'Tool execution ended before a verified durable success record was persisted.'
+  );
+
+  assert.equal(action?.args?.path, 'recovery.txt');
+  assert.equal(action?.args?.content, 'safe recovery content');
+  assert.equal(action?.args?.token, undefined);
+  assert.equal(action?.args?.nested?.apiKey, undefined);
+
+  assert.equal(action?.evidence?.available, false);
+  assert.equal(action?.evidence?.beforeHash, null);
+  assert.equal(action?.evidence?.afterHash, null);
+
+  assert.doesNotMatch(
+    result.text,
+    /TOP-SECRET-TOKEN|TOP-SECRET-API-KEY/
+  );
+});
+
+test('recovery route exposes only needs_verification actions', async () => {
+  const taskId = 'task-recovery-api-filter';
+  await seedTask(taskId);
+
+  seedStore.recordToolAction({
+    id: 'action-recovery-pending',
+    idempotencyKey: 'recovery-pending-key',
+    taskId,
+    toolName: 'read_file',
+    args: { path: 'pending.txt' },
+    status: 'pending'
+  });
+
+  seedStore.recordToolAction({
+    id: 'action-recovery-success',
+    idempotencyKey: 'recovery-success-key',
+    taskId,
+    toolName: 'read_file',
+    args: { path: 'success.txt' },
+    status: 'success',
+    finishedAt: new Date().toISOString()
+  });
+
+  seedStore.recordToolAction({
+    id: 'action-recovery-uncertain',
+    idempotencyKey: 'recovery-uncertain-key',
+    taskId,
+    toolName: 'write_file',
+    args: { path: 'uncertain.txt' },
+    status: 'needs_verification',
+    finishedAt: new Date().toISOString()
+  });
+
+  const result = await request(
+    'GET',
+    `/api/tasks/${taskId}/recovery`
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body?.count, 1);
+  assert.equal(
+    result.body?.actions?.[0]?.id,
+    'action-recovery-uncertain'
+  );
+});
+
+test('recovery route returns 404 for an unknown task', async () => {
+  const result = await request(
+    'GET',
+    '/api/tasks/does-not-exist/recovery'
+  );
+
+  assert.equal(result.status, 404);
+  assert.equal(result.body?.error, 'Task not found.');
+});
+
+test('recovery route is bounded to the latest 20 uncertain actions', async () => {
+  const taskId = 'task-recovery-api-bound';
+  await seedTask(taskId);
+
+  for (let index = 0; index < 25; index += 1) {
+    seedStore.recordToolAction({
+      id: `action-recovery-bound-${index}`,
+      idempotencyKey: `recovery-bound-key-${index}`,
+      taskId,
+      toolName: 'write_file',
+      args: {
+        path: `recovery-${index}.txt`
+      },
+      status: 'needs_verification',
+      finishedAt: new Date(
+        Date.now() + index
+      ).toISOString()
+    });
+  }
+
+  const result = await request(
+    'GET',
+    `/api/tasks/${taskId}/recovery`
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body?.limit, 20);
+  assert.equal(result.body?.total, 25);
+  assert.equal(result.body?.count, 20);
+  assert.equal(result.body?.truncated, true);
+});
+
+test('recovery route performs no mutation', async () => {
+  const taskId = 'task-recovery-api-readonly';
+  const actionId = 'action-recovery-readonly';
+
+  await seedTask(taskId);
+
+  seedStore.recordToolAction({
+    id: actionId,
+    idempotencyKey: 'recovery-readonly-key',
+    taskId,
+    toolName: 'write_file',
+    args: {
+      path: 'readonly.txt'
+    },
+    status: 'needs_verification',
+    finishedAt: new Date().toISOString(),
+    error: 'Uncertain outcome.'
+  });
+
+  const before = seedStore.getToolAction(actionId);
+
+  const result = await request(
+    'GET',
+    `/api/tasks/${taskId}/recovery`
+  );
+
+  assert.equal(result.status, 200);
+
+  const after = seedStore.getToolAction(actionId);
+  assert.deepEqual(after, before);
+});

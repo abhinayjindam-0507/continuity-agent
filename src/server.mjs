@@ -20,6 +20,7 @@ import { createOrchestratorBridge } from './events/orchestrator-bridge.mjs';
 import {
   MAX_TRANSCRIPT_MESSAGES,
   sanitizeApprovalRequest,
+  sanitizeRecoveryToolAction,
   sanitizeTaskSnapshot,
   sanitizeTaskTranscriptMessage
 } from './events/event-schema.mjs';
@@ -962,6 +963,59 @@ const server = createServer(async (request, response) => {
         });
       } catch (error) {
         return respondToProjectPathError(response, error);
+      }
+    }
+
+    // GET /api/tasks/:id/recovery
+    // Read-only recovery inspection for durable tool actions parked in
+    // needs_verification. This endpoint never executes, retries, mutates,
+    // or re-authorizes an uncertain action.
+    const recoveryMatch = url.pathname.match(
+      /^\/api\/tasks\/([^/]+)\/recovery$/
+    );
+    if (
+      request.method === 'GET' &&
+      recoveryMatch
+    ) {
+      let taskId;
+      try {
+        taskId = decodeURIComponent(recoveryMatch[1]);
+      } catch {
+        return json(response, 400, {
+          error: 'Invalid task identifier.'
+        });
+      }
+
+      try {
+        const task = store?.getTask?.(taskId);
+
+        if (!task) {
+          return json(response, 404, {
+            error: 'Task not found.'
+          });
+        }
+
+        const result = store.getNeedsVerificationToolActions(taskId);
+
+        const actions = result.actions.map(action => {
+          const evidence = store.getToolActionEvidence(action.id);
+          return sanitizeRecoveryToolAction(action, evidence);
+        });
+
+        return json(response, 200, {
+          ok: true,
+          taskId,
+          source: 'sqlite',
+          limit: result.limit,
+          total: result.total,
+          count: actions.length,
+          truncated: result.truncated,
+          actions
+        });
+      } catch {
+        return json(response, 500, {
+          error: 'Recovery state could not be read safely.'
+        });
       }
     }
 

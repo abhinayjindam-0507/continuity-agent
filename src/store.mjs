@@ -808,6 +808,73 @@ export async function openStore(dataRoot) {
     return row;
   }
 
+  function getNeedsVerificationToolActions(taskId, limit = 20) {
+    if (!taskId || !String(taskId).trim()) {
+      throw new Error('taskId is required to retrieve recovery actions');
+    }
+
+    const requestedLimit = Number.isInteger(limit) ? limit : 20;
+    const effectiveLimit = Math.max(1, Math.min(requestedLimit, 20));
+    const normalizedTaskId = String(taskId);
+
+    const rows = database.prepare(`
+      SELECT
+        id,
+        idempotency_key AS idempotencyKey,
+        task_id AS taskId,
+        tool_name AS toolName,
+        tool_call_id AS toolCallId,
+        arguments,
+        policy_decision AS policyDecision,
+        status,
+        started_at AS startedAt,
+        finished_at AS finishedAt,
+        error
+      FROM tool_actions
+      WHERE task_id = ?
+        AND status = 'needs_verification'
+      ORDER BY
+        COALESCE(finished_at, started_at) DESC,
+        rowid DESC
+      LIMIT ?
+    `).all(normalizedTaskId, effectiveLimit);
+
+    const total = database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM tool_actions
+      WHERE task_id = ?
+        AND status = 'needs_verification'
+    `).get(normalizedTaskId).count;
+
+    return {
+      limit: effectiveLimit,
+      total,
+      truncated: total > rows.length,
+      actions: rows.map(row => {
+        let args = {};
+        try {
+          args = JSON.parse(row.arguments);
+        } catch {
+          args = {};
+        }
+
+        return {
+          id: row.id,
+          idempotencyKey: row.idempotencyKey,
+          taskId: row.taskId,
+          toolName: row.toolName,
+          toolCallId: row.toolCallId || null,
+          args,
+          policyDecision: row.policyDecision,
+          status: row.status,
+          startedAt: row.startedAt,
+          finishedAt: row.finishedAt,
+          error: row.error || null
+        };
+      })
+    };
+  }
+
   function getCompletedToolAction(taskIdOrKey, toolName, args) {
     let key;
     if (toolName === undefined && args === undefined) {
@@ -1781,6 +1848,7 @@ export async function openStore(dataRoot) {
     recordToolAction,
     getToolAction,
     getCompletedToolAction,
+    getNeedsVerificationToolActions,
     claimToolActionForApproval,
     createApprovalRequest,
     getApprovalRequest,

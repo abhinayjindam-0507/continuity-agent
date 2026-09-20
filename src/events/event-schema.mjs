@@ -155,6 +155,68 @@ export function sanitizeApprovalRequest(approval) {
   };
 }
 
+export function sanitizeRecoveryToolAction(action, evidence = null) {
+  if (!action || typeof action !== 'object') return null;
+
+  const errorText = String(action.error || '').trim();
+  const lowerError = errorText.toLowerCase();
+
+  let reason =
+    'Tool action outcome is uncertain and requires manual verification.';
+
+  if (lowerError.includes('evidence')) {
+    reason = 'Durable change evidence was not persisted.';
+  } else if (errorText) {
+    reason =
+      'Tool execution ended before a verified durable success record was persisted.';
+  }
+
+  const safeEvidence = evidence
+    ? {
+        available: true,
+        id: String(evidence.id || '').slice(0, 100),
+        operation: String(evidence.operation || '').slice(0, 50),
+        relativePath: String(evidence.relativePath || '').slice(0, 500),
+        evidenceVersion: Number.isInteger(evidence.evidenceVersion)
+          ? evidence.evidenceVersion
+          : null,
+        beforeHash: String(evidence.beforeHash || '').slice(0, 64) || null,
+        afterHash: String(evidence.afterHash || '').slice(0, 64) || null,
+        capturedAt: String(evidence.capturedAt || '').slice(0, 50)
+      }
+    : {
+        available: false,
+        id: null,
+        operation: null,
+        relativePath: null,
+        evidenceVersion: null,
+        beforeHash: null,
+        afterHash: null,
+        capturedAt: null
+      };
+
+  return {
+    id: String(action.id || '').slice(0, 100),
+    taskId: String(action.taskId || '').slice(0, 100),
+    toolName: String(action.toolName || '').slice(0, 100),
+    toolCallId: action.toolCallId
+      ? String(action.toolCallId).slice(0, 100)
+      : null,
+    policyDecision: String(action.policyDecision || '').slice(0, 50),
+    status: String(action.status || '').slice(0, 30),
+    startedAt: String(action.startedAt || '').slice(0, 50),
+    finishedAt: String(action.finishedAt || '').slice(0, 50),
+    hasError: Boolean(errorText),
+    reason,
+    args: stripSensitiveKeys(
+      action.args && typeof action.args === 'object'
+        ? action.args
+        : {}
+    ),
+    evidence: safeEvidence
+  };
+}
+
 export const MAX_TRANSCRIPT_MESSAGES = 50;
 
 const MAX_TRANSCRIPT_CONTENT = 4000;
