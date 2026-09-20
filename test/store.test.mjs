@@ -1911,6 +1911,7 @@ test('approved mutation executes the persisted action once and replay never exec
       id: 'action-approval-execution-orch-1',
       taskId: task.id,
       toolName: 'write_file',
+      toolCallId: 'approval-orch-tool-call-1',
       args: {
         path: 'src/exact-approved.js',
         content: 'approved exact content'
@@ -1931,6 +1932,25 @@ test('approved mutation executes the persisted action once and replay never exec
 
     store.resolveApprovalRequest(approval.id, {
       status: 'approved'
+    });
+
+    store.appendTaskMessage({
+      taskId: task.id,
+      message: {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: 'approval-orch-tool-call-1',
+            function: {
+              name: 'write_file',
+              arguments: JSON.stringify({
+                path: 'src/exact-approved.js',
+                content: 'approved exact content'
+              })
+            }
+          }
+        ]
+      }
     });
 
     let brokerExecutions = 0;
@@ -1996,6 +2016,30 @@ test('approved mutation executes the persisted action once and replay never exec
     const completed = store.getToolAction(action.id);
 
     assert.equal(completed.status, 'success');
+    assert.equal(
+      completed.toolCallId,
+      'approval-orch-tool-call-1'
+    );
+
+    const transcript = store
+      .getTaskMessages(task.id)
+      .map(item => item.message);
+
+    assert.equal(transcript.length, 2);
+    assert.equal(transcript[0].role, 'assistant');
+    assert.equal(transcript[0].tool_calls[0].id, 'approval-orch-tool-call-1');
+    assert.equal(transcript[1].role, 'tool');
+    assert.equal(
+      transcript[1].tool_call_id,
+      'approval-orch-tool-call-1'
+    );
+    assert.equal(
+      transcript[1].content,
+      JSON.stringify({
+        ok: true,
+        path: 'src/exact-approved.js'
+      })
+    );
 
     const consumed = store.getApprovalRequest(approval.id);
 

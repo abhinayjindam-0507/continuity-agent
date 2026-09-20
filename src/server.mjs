@@ -734,6 +734,12 @@ const server = createServer(async (request, response) => {
         });
       }
 
+      if (execution?.resumed) {
+        setImmediate(() => {
+          orchestrator.runTask(taskId).catch(() => {});
+        });
+      }
+
       return json(response, 200, {
         ok: true,
         decision: 'approved',

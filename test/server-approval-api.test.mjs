@@ -54,6 +54,7 @@ async function seedApproval({
     id: toolActionId,
     taskId,
     toolName,
+    toolCallId: `${id}-tool-call`,
     args,
     status: 'pending',
     policyDecision: 'requires_approval',
@@ -248,6 +249,16 @@ test('approve route resolves approval before exact mutation execution', async ()
   assert.equal(approval.status, 'consumed');
   assert.equal(action.status, 'success');
 
+  const approvedTask = seedStore
+    .getTasks()
+    .find(item => item.id === TASK_ID);
+
+  assert.ok(
+    approvedTask?.status === 'running' ||
+      approvedTask?.status === 'completed',
+    `expected approved task to resume, got ${approvedTask?.status}`
+  );
+
   assert.equal(result.body?.ok, true);
   assert.equal(result.body?.approval?.id, APPROVAL_ID);
   assert.equal(result.body?.action?.id, ACTION_ID);
@@ -306,16 +317,26 @@ test('deny route resolves approval without executing the action', async () => {
 });
 
 test('continue route does not bypass awaiting approval', async () => {
-  const task = seedStore.getTasks().find(item => item.id === TASK_ID);
+  const continueTaskId = 'task-approval-continue-api';
+
+  await seedTask(continueTaskId);
+
+  const task = seedStore
+    .getTasks()
+    .find(item => item.id === continueTaskId);
+
   assert.equal(task?.status, 'awaiting_approval');
 
   const result = await request(
     'POST',
-    `/api/tasks/${TASK_ID}/continue`
+    `/api/tasks/${continueTaskId}/continue`
   );
 
   assert.equal(result.status, 409);
 
-  const after = seedStore.getTasks().find(item => item.id === TASK_ID);
+  const after = seedStore
+    .getTasks()
+    .find(item => item.id === continueTaskId);
+
   assert.equal(after?.status, 'awaiting_approval');
 });

@@ -220,6 +220,7 @@ export async function openStore(dataRoot) {
       idempotency_key TEXT UNIQUE NOT NULL,
       task_id TEXT NOT NULL,
       tool_name TEXT NOT NULL,
+      tool_call_id TEXT,
       arguments TEXT NOT NULL,
       policy_decision TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -272,6 +273,14 @@ export async function openStore(dataRoot) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_requests_action ON approval_requests(tool_action_id);
     CREATE INDEX IF NOT EXISTS idx_approval_requests_status_expiry ON approval_requests(status, expires_at);
   `);
+
+  const toolActionColumns = database
+    .prepare('PRAGMA table_info(tool_actions)')
+    .all();
+
+  if (!toolActionColumns.some(column => column.name === 'tool_call_id')) {
+    database.exec('ALTER TABLE tool_actions ADD COLUMN tool_call_id TEXT');
+  }
 
   // On reopening store, mark any pending or in_progress tool actions as needs_verification
   database.exec(`
@@ -713,6 +722,7 @@ export async function openStore(dataRoot) {
     idempotencyKey,
     taskId,
     toolName,
+    toolCallId = null,
     args = {},
     policyDecision = 'allowed',
     status = 'pending',
@@ -737,11 +747,12 @@ export async function openStore(dataRoot) {
 
     database.prepare(`
       INSERT INTO tool_actions (
-        id, idempotency_key, task_id, tool_name, arguments,
+        id, idempotency_key, task_id, tool_name, tool_call_id, arguments,
         policy_decision, status, started_at, finished_at, result_summary, error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(idempotency_key) DO UPDATE SET
         status = excluded.status,
+        tool_call_id = COALESCE(excluded.tool_call_id, tool_actions.tool_call_id),
         finished_at = COALESCE(excluded.finished_at, tool_actions.finished_at),
         result_summary = COALESCE(excluded.result_summary, tool_actions.result_summary),
         error = COALESCE(excluded.error, tool_actions.error)
@@ -750,6 +761,7 @@ export async function openStore(dataRoot) {
       key,
       String(taskId),
       String(toolName),
+      toolCallId ? String(toolCallId).slice(0, 200) : null,
       canonicalArgs,
       String(policyDecision).slice(0, 50),
       String(status).slice(0, 50),
@@ -765,7 +777,8 @@ export async function openStore(dataRoot) {
   function getToolAction(idOrKey) {
     const row = database.prepare(`
       SELECT id, idempotency_key AS idempotencyKey, task_id AS taskId,
-             tool_name AS toolName, arguments, policy_decision AS policyDecision,
+             tool_name AS toolName, tool_call_id AS toolCallId,
+             arguments, policy_decision AS policyDecision,
              status, started_at AS startedAt, finished_at AS finishedAt,
              result_summary AS resultSummary, error
       FROM tool_actions

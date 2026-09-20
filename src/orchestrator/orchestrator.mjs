@@ -810,6 +810,7 @@ export function createOrchestrator({
             actionRecord = store.recordToolAction({
               taskId,
               toolName,
+              toolCallId: call.id || null,
               args: toolArgs,
               policyDecision: 'requires_approval',
               status: 'pending',
@@ -878,6 +879,7 @@ export function createOrchestrator({
           actionRecord = store.recordToolAction({
             taskId,
             toolName,
+            toolCallId: call.id || null,
             args: toolArgs,
             policyDecision: policy.decision,
             status: 'pending',
@@ -1155,6 +1157,61 @@ export function createOrchestrator({
 
     const persistedArgs = action.args || {};
 
+    const persistApprovedToolResult = () => {
+      if (!store?.appendTaskMessage) return false;
+
+      // Older durable actions created before tool_call_id existed remain
+      // executable. They cannot safely fabricate a model tool-call identity,
+      // so transcript persistence is skipped for that legacy record while
+      // durable idempotency/recovery remains intact.
+      if (!action.toolCallId) return false;
+
+      if (typeof action.resultSummary !== 'string') {
+        throw new Error(
+          'Approved tool action is missing a durable result summary.'
+        );
+      }
+
+      store.appendTaskMessage({
+        id: `tool-result:${action.id}`,
+        taskId,
+        message: {
+          role: 'tool',
+          tool_call_id: action.toolCallId,
+          content: action.resultSummary
+        }
+      });
+
+      return true;
+    };
+
+    const resumeApprovedTask = async () => {
+      const tasks = await getTasks();
+      const currentTask = tasks.find(item => item.id === taskId);
+
+      if (!currentTask || currentTask.status !== 'awaiting_approval') {
+        return false;
+      }
+
+      await updateTask(currentTask, item => {
+        transitionTask(item, 'running');
+        item.message =
+          `Approval completed for ${action.toolName}. Resuming from the durable transcript.`;
+        item.steps.push({
+          at: new Date().toISOString(),
+          kind: 'approval_completed',
+          name: action.toolName,
+          detail: 'Approved mutation completed and task is resuming.'
+        });
+        checkpoint(
+          item,
+          `Approval completed: ${action.toolName}`
+        );
+      });
+
+      return true;
+    };
+
     // A previously successful action may only need its still-approved
     // approval request to be consumed. Never execute the broker again.
     if (action.status === 'success') {
@@ -1168,6 +1225,8 @@ export function createOrchestrator({
         };
       }
 
+      persistApprovedToolResult();
+
       const consumed = store.consumeApprovalRequest(approvalId, {
         taskId,
         toolActionId: action.id,
@@ -1175,12 +1234,15 @@ export function createOrchestrator({
         args: persistedArgs
       });
 
+      const resumed = await resumeApprovedTask();
+
       return {
         ok: true,
         replayed: true,
+        resumed,
         approval: consumed,
         action,
-        result: null
+        result: action.resultSummary
       };
     }
 
@@ -1336,12 +1398,28 @@ export function createOrchestrator({
         });
       }
 
+      // Persist the exact tool result before approval consumption so a crash
+      // cannot leave a consumed approval without its resume transcript.
+      if (store?.appendTaskMessage) {
+        store.appendTaskMessage({
+          id: `tool-result:${action.id}`,
+          taskId,
+          message: {
+            role: 'tool',
+            tool_call_id: claimedAction.toolCallId,
+            content: JSON.stringify(result)
+          }
+        });
+      }
+
       const consumed = store.consumeApprovalRequest(approvalId, {
         taskId,
         toolActionId: action.id,
         toolName: action.toolName,
         args: persistedArgs
       });
+
+      const resumed = await resumeApprovedTask();
 
       emit?.('tool_completed', {
         taskId,
@@ -1353,6 +1431,7 @@ export function createOrchestrator({
       return {
         ok: true,
         replayed: false,
+        resumed,
         approval: consumed,
         action: store.getToolAction(action.id),
         result
