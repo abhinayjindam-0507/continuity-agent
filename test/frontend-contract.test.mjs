@@ -78,6 +78,45 @@ test('4. frontend wires pause and resume endpoints', async () => {
   );
 });
 
+test('4f. workspace transcript view uses the bounded transcript API', async () => {
+  const content = await readFile(indexHtmlPath, 'utf8');
+
+  assert.ok(
+    content.includes('id="btnActivityView"'),
+    'Workspace must expose the Activity view control'
+  );
+
+  assert.ok(
+    content.includes('id="btnTranscriptView"'),
+    'Workspace must expose the Transcript view control'
+  );
+
+  assert.ok(
+    content.includes('id="transcriptBody"'),
+    'Workspace must contain the transcript rendering surface'
+  );
+
+  assert.ok(
+    content.includes('/transcript?limit=50'),
+    'Frontend must load the bounded transcript API'
+  );
+
+  assert.ok(
+    content.includes('loadTaskTranscript'),
+    'Frontend must implement transcript loading'
+  );
+
+  assert.ok(
+    content.includes('setWorkspaceLogView'),
+    'Frontend must switch between activity and transcript views'
+  );
+
+  assert.ok(
+    content.includes('tool_call_id'),
+    'Transcript renderer must preserve tool-call correlation'
+  );
+});
+
 test('4b. project explorer wires the read-only backend file APIs', async () => {
   const content = await readFile(indexHtmlPath, 'utf8');
 
