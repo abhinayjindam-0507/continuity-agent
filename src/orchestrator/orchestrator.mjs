@@ -271,9 +271,12 @@ export function createOrchestrator({
           reason: recovery.error || 'Task integrity check failed'
         });
         await updateTask(task, item => {
+          // Do not create a new checkpoint when recovery failed. The existing
+          // latest checkpoint is the evidence that failed verification and
+          // must remain the latest durable checkpoint so resume keeps failing
+          // closed until the corruption is manually resolved.
           item.status = 'paused';
           item.message = `Recovery required: ${recovery.error}`;
-          checkpoint(item, `Recovery required: ${recovery.error}`);
         });
         return;
       }

@@ -70,6 +70,19 @@ export const APPROVAL_REQUEST_STATUSES = Object.freeze([
   'consumed'
 ]);
 
+// Task statuses that represent in-memory execution work in flight. None of
+// these can be trusted to still be "live" once the process that set them has
+// disappeared (crash/restart) — the durable record alone cannot tell us
+// whether the model call, handoff, or step loop that produced this status is
+// still running. Startup recovery reconciles exactly these statuses into the
+// existing 'paused' state (a valid transition target from all three per
+// task-state.mjs) rather than assuming in-memory execution continued.
+export const INTERRUPTED_EXECUTION_STATUSES = Object.freeze([
+  'running',
+  'switching_model',
+  'validating_handoff'
+]);
+
 const SENSITIVE_KEY_PATTERN = /(?:password|secret|token|credential|auth|key|private)/i;
 const MAX_CANONICAL_DEPTH = 5;
 const MAX_CANONICAL_ARRAY_LEN = 50;
@@ -1481,6 +1494,221 @@ export async function openStore(dataRoot) {
     };
   }
 
+  // ── Durable startup recovery reconciliation ─────────────────────────────
+
+  /**
+   * Same durable-transition contract as recordTaskTransition (one
+   * transaction: checkpoint(s) -> event -> task snapshot -> commit, full
+   * rollback on any failure) but additionally binds the write to the task's
+   * *currently persisted* status, re-read inside the same transaction.
+   *
+   * This exists specifically for startup reconciliation: the candidate task
+   * list is gathered by an earlier, separate read (getTasks()), so by the
+   * time a given task's reconciliation actually runs, another writer could
+   * in principle have already moved it on (e.g. resolved its approval,
+   * completed it, etc.). Re-checking status under the write lock, and
+   * basing the persisted payload on the freshly re-read row rather than the
+   * stale scanned copy, guarantees reconciliation can never clobber a
+   * concurrent lifecycle change with stale data. If the status no longer
+   * matches, the whole transaction is rolled back and the task is left
+   * completely untouched.
+   */
+  function recordTaskTransitionIfCurrentStatus({
+    taskId,
+    expectedPreviousStatus,
+    nextStatus,
+    reason,
+    buildCheckpoint,
+    buildReason
+  }) {
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      const row = database.prepare('SELECT payload FROM tasks WHERE id = ?').get(String(taskId));
+      const freshTask = row ? JSON.parse(row.payload) : null;
+
+      if (!freshTask || freshTask.status !== expectedPreviousStatus) {
+        database.exec('ROLLBACK');
+        return {
+          ok: false,
+          skipped: true,
+          taskId,
+          currentStatus: freshTask ? freshTask.status : null,
+          reason: 'Task status changed since reconciliation scan; skipped to avoid overwriting a concurrent lifecycle change.'
+        };
+      }
+
+      const latestCheckpoint = getLatestCheckpoint(taskId);
+      const finalReason = buildReason
+        ? buildReason({ task: freshTask, latestCheckpoint })
+        : reason;
+
+      const cp = buildCheckpoint
+        ? buildCheckpoint({ task: freshTask, latestCheckpoint, reason: finalReason })
+        : null;
+
+      let lastCpRecord = null;
+      if (cp) {
+        lastCpRecord = recordCheckpointInternal({ ...cp, taskId: cp.taskId || taskId });
+      }
+
+      const eventRecord = recordTaskEventInternal({
+        taskId,
+        previousStatus: expectedPreviousStatus,
+        nextStatus,
+        timestamp: new Date().toISOString(),
+        reason: finalReason,
+        checkpointId: lastCpRecord ? lastCpRecord.id : null
+      });
+
+      const reconciledTask = {
+        ...freshTask,
+        status: nextStatus,
+        message: finalReason,
+        updatedAt: eventRecord.timestamp,
+        checkpoints: lastCpRecord
+          ? [...(Array.isArray(freshTask.checkpoints) ? freshTask.checkpoints : []), lastCpRecord]
+          : (Array.isArray(freshTask.checkpoints) ? freshTask.checkpoints : [])
+      };
+
+      upsertTaskInternal(reconciledTask);
+
+      database.exec('COMMIT');
+
+      return {
+        ok: true,
+        taskId,
+        task: reconciledTask,
+        event: eventRecord,
+        checkpoint: lastCpRecord
+      };
+    } catch (err) {
+      database.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /**
+   * Reconciles tasks whose durable status is one of
+   * INTERRUPTED_EXECUTION_STATUSES into the existing 'paused' state.
+   *
+   * Runs automatically once on every openStore() (see bottom of this
+   * function) — the same "reconcile on reopen" precedent already used
+   * above for pending/in_progress tool actions — and is also exposed on the
+   * store so callers/tests can invoke it explicitly.
+   *
+   * - Never invokes a model or a tool: this only ever moves a task's status
+   *   and records bookkeeping (task event + checkpoint), so requirements 3/4
+   *   (no automatic replay of model invocation or tool re-execution) hold
+   *   trivially — there is no code path here that can reach either.
+   * - Never touches task_messages: the durable transcript is left exactly
+   *   as persisted (requirement 15).
+   * - Never touches tool_actions or approval_requests: pending/in_progress
+   *   tool-action recovery (already fail-closed, above) and
+   *   awaiting_approval tasks are completely untouched (requirements 11-14).
+   * - A corrupted latest checkpoint is detected and named in the transition
+   *   reason/message, but the corrupted row itself is never modified,
+   *   replaced, or deleted — it stays in the checkpoints table exactly as
+   *   found, preserved as evidence.
+   * - Idempotent: once a task is reconciled its status is 'paused', which is
+   *   no longer in INTERRUPTED_EXECUTION_STATUSES, so re-running this is a
+   *   no-op for that task (no duplicate event, checkpoint, or execution).
+   * - Fail-closed per task: a task that cannot be reconciled (unexpected
+   *   error, or its status changed concurrently) is skipped/reported rather
+   *   than throwing and aborting reconciliation for the rest of the set.
+   *
+   * @param {(task: object) => void} [_testSeam] - optional hook invoked with
+   *   the scanned (pre-reconciliation) task copy just before its guarded
+   *   transactional write executes, for tests to simulate a concurrent
+   *   external status change between the scan and the write.
+   */
+  function reconcileInterruptedTasks(_testSeam = null) {
+    const results = [];
+    const scannedTasks = getTasks();
+
+    for (const scannedTask of scannedTasks) {
+      if (!scannedTask || !INTERRUPTED_EXECUTION_STATUSES.includes(scannedTask.status)) {
+        continue;
+      }
+
+      const taskId = scannedTask.id;
+      const previousStatus = scannedTask.status;
+
+      try {
+        if (typeof _testSeam === 'function') {
+          _testSeam({ ...scannedTask });
+        }
+
+        const outcome = recordTaskTransitionIfCurrentStatus({
+          taskId,
+          expectedPreviousStatus: previousStatus,
+          nextStatus: 'paused',
+          buildReason: ({ task, latestCheckpoint }) => {
+            let checkpointNote;
+            let corrupted = false;
+
+            if (latestCheckpoint) {
+              const verification = verifyCheckpoint(latestCheckpoint);
+              corrupted = !verification.valid;
+              checkpointNote = verification.valid
+                ? `Last durable checkpoint "${latestCheckpoint.id}" (step ${latestCheckpoint.step}) verified intact.`
+                : `Last durable checkpoint "${latestCheckpoint.id}" failed integrity verification (${verification.reason}); it has been preserved unchanged and requires manual verification before this task can safely resume.`;
+            } else {
+              checkpointNote = 'No durable checkpoint was recorded before the interruption.';
+            }
+
+            return (
+              `Startup recovery: task was interrupted while "${previousStatus}" ` +
+              `(the process stopped before it reached a durable resting state) ` +
+              `and has been paused pending explicit resume. ${checkpointNote}`
+            );
+          },
+          buildCheckpoint: ({ task, latestCheckpoint, reason }) => {
+            // A corrupted checkpoint must remain the latest durable evidence so
+            // the existing recoverTask() path can continue to fail closed on
+            // explicit resume. Never replace or supersede corrupted evidence.
+            if (latestCheckpoint) {
+              const verification = verifyCheckpoint(latestCheckpoint);
+              if (!verification.valid) return null;
+            }
+
+            const cpData = {
+              id: randomUUID(),
+              taskId,
+              createdAt: new Date().toISOString(),
+              event: `Startup recovery: reconciled from "${previousStatus}"`,
+              status: 'paused',
+              activeModel: task.activeModel || latestCheckpoint?.activeModel || '',
+              step: Array.isArray(task.steps) ? task.steps.length : (latestCheckpoint?.step || 0),
+              workspace: latestCheckpoint?.workspace || ''
+            };
+            return {
+              ...cpData,
+              integrityHash: computeCheckpointHash(cpData)
+            };
+          }
+        });
+
+        results.push({
+          taskId,
+          previousStatus,
+          ...outcome
+        });
+      } catch (err) {
+        // Fail closed per task: one malformed/unreconcilable task must never
+        // abort reconciliation for the rest of the durable task set, and the
+        // failure must never be silently swallowed either.
+        results.push({
+          ok: false,
+          taskId,
+          previousStatus,
+          error: err.message
+        });
+      }
+    }
+
+    return results;
+  }
+
   function getConfig() {
     const row = database.prepare("SELECT value FROM app_config WHERE key = 'runtime'").get();
     return row ? JSON.parse(row.value) : {};
@@ -1499,6 +1727,13 @@ export async function openStore(dataRoot) {
   function close() {
     database.close();
   }
+
+  // On store (re)open, deterministically reconcile any task left in an
+  // execution-related status (running / switching_model / validating_handoff)
+  // into the existing 'paused' state — mirroring the pending/in_progress
+  // tool-action reconciliation above. See reconcileInterruptedTasks() for
+  // the full contract.
+  reconcileInterruptedTasks();
 
   return {
     getTasks,
@@ -1528,6 +1763,7 @@ export async function openStore(dataRoot) {
     getToolActionEvidence,
     getFileChangeEvidence,
     recoverTask,
+    reconcileInterruptedTasks,
     getConfig,
     saveConfig,
     close,

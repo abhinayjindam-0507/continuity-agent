@@ -9,9 +9,30 @@ import {
   verifyCheckpoint,
   canonicalizeToolArgs,
   computeToolIdempotencyKey,
-  TOOL_ACTION_STATUSES
+  TOOL_ACTION_STATUSES,
+  INTERRUPTED_EXECUTION_STATUSES
 } from '../src/store.mjs';
 import { createOrchestrator } from '../src/orchestrator/orchestrator.mjs';
+import { transitionTask } from '../src/task-state.mjs';
+
+// ── Durable startup recovery reconciliation helpers ─────────────────────────
+
+function makeInterruptedTask(overrides = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: 'task-recovery',
+    goal: 'Task interrupted by a simulated crash',
+    status: 'running',
+    message: 'In progress',
+    activeModel: 'qwen3:4b',
+    createdAt: now,
+    updatedAt: now,
+    steps: [],
+    checkpoints: [],
+    switches: [],
+    ...overrides
+  };
+}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -2052,6 +2073,605 @@ test('approved mutation executes the persisted action once and replay never exec
     assert.equal(brokerExecutions, 1);
 
     store.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ── Durable startup recovery reconciliation ─────────────────────────────────
+
+test('recovery-A. a task persisted as running survives restart safely and does not blindly execute', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    assert.deepEqual(
+      INTERRUPTED_EXECUTION_STATUSES,
+      ['running', 'switching_model', 'validating_handoff']
+    );
+
+    const store1 = await openStore(dir);
+    const task = makeInterruptedTask({ id: 'task-running-crash', status: 'running' });
+    store1.upsertTask(task);
+    store1.close();
+
+    // Reopen (simulates process restart) — reconciliation runs automatically.
+    const store2 = await openStore(dir);
+
+    const recovered = store2.getTask('task-running-crash');
+    assert.equal(recovered.status, 'paused');
+    assert.match(recovered.message, /Startup recovery/);
+    assert.match(recovered.message, /"running"/);
+    assert.match(recovered.message, /No durable checkpoint was recorded/);
+
+    // It must not have been silently resumed into any executing status.
+    assert.notEqual(recovered.status, 'running');
+
+    const events = store2.getTaskEvents('task-running-crash');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].previousStatus, 'running');
+    assert.equal(events[0].nextStatus, 'paused');
+    assert.match(events[0].reason, /Startup recovery/);
+
+    const latestCheckpoint = store2.getLatestCheckpoint('task-running-crash');
+    assert.ok(latestCheckpoint);
+    assert.equal(latestCheckpoint.status, 'paused');
+    assert.equal(events[0].checkpointId, latestCheckpoint.id);
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery-B. a task persisted as switching_model survives restart safely', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+    const task = makeInterruptedTask({
+      id: 'task-switching-crash',
+      status: 'switching_model',
+      message: 'Switching from modelA to modelB.'
+    });
+    store1.upsertTask(task);
+    store1.close();
+
+    const store2 = await openStore(dir);
+    const recovered = store2.getTask('task-switching-crash');
+
+    assert.equal(recovered.status, 'paused');
+    assert.match(recovered.message, /Startup recovery/);
+    assert.match(recovered.message, /"switching_model"/);
+
+    const events = store2.getTaskEvents('task-switching-crash');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].previousStatus, 'switching_model');
+    assert.equal(events[0].nextStatus, 'paused');
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery-C. a task persisted as validating_handoff survives restart safely', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+    const task = makeInterruptedTask({
+      id: 'task-validating-crash',
+      status: 'validating_handoff',
+      message: 'Validating handoff to modelB.'
+    });
+    store1.upsertTask(task);
+    store1.close();
+
+    const store2 = await openStore(dir);
+    const recovered = store2.getTask('task-validating-crash');
+
+    assert.equal(recovered.status, 'paused');
+    assert.match(recovered.message, /Startup recovery/);
+    assert.match(recovered.message, /"validating_handoff"/);
+
+    const events = store2.getTaskEvents('task-validating-crash');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].previousStatus, 'validating_handoff');
+    assert.equal(events[0].nextStatus, 'paused');
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery-D. reconciliation is idempotent across repeated runs', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+    const task = makeInterruptedTask({ id: 'task-idempotent-crash', status: 'running' });
+    store1.upsertTask(task);
+    store1.close();
+
+    // openStore() runs reconciliation once automatically (recovery pass #1).
+    const store2 = await openStore(dir);
+    const afterFirst = store2.getTask('task-idempotent-crash');
+    assert.equal(afterFirst.status, 'paused');
+
+    const eventsAfterFirst = store2.getTaskEvents('task-idempotent-crash');
+    const checkpointsAfterFirst = store2.getCheckpoints('task-idempotent-crash');
+    assert.equal(eventsAfterFirst.length, 1);
+    assert.equal(checkpointsAfterFirst.length, 1);
+
+    // Explicit recovery pass #2 against the same open store.
+    const secondPassResults = store2.reconcileInterruptedTasks();
+    assert.equal(
+      secondPassResults.some(r => r.taskId === 'task-idempotent-crash'),
+      false,
+      'a task already reconciled to paused must not be a candidate again'
+    );
+
+    const eventsAfterSecond = store2.getTaskEvents('task-idempotent-crash');
+    const checkpointsAfterSecond = store2.getCheckpoints('task-idempotent-crash');
+    assert.equal(eventsAfterSecond.length, 1, 'no duplicate event');
+    assert.equal(checkpointsAfterSecond.length, 1, 'no duplicate checkpoint');
+
+    // A third pass, and a close/reopen cycle, are equally inert.
+    store2.reconcileInterruptedTasks();
+    store2.close();
+    const store3 = await openStore(dir);
+    assert.equal(store3.getTaskEvents('task-idempotent-crash').length, 1);
+    assert.equal(store3.getCheckpoints('task-idempotent-crash').length, 1);
+    assert.equal(store3.getTask('task-idempotent-crash').status, 'paused');
+
+    store3.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery-E. terminal tasks (completed/failed) are untouched by reconciliation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+    const completedTask = makeInterruptedTask({
+      id: 'task-completed',
+      status: 'completed',
+      message: 'Finished successfully.'
+    });
+    const failedTask = makeInterruptedTask({
+      id: 'task-failed',
+      status: 'failed',
+      message: 'Ran out of retries.'
+    });
+    store1.upsertTask(completedTask);
+    store1.upsertTask(failedTask);
+    store1.close();
+
+    const store2 = await openStore(dir);
+
+    const recoveredCompleted = store2.getTask('task-completed');
+    assert.equal(recoveredCompleted.status, 'completed');
+    assert.equal(recoveredCompleted.message, 'Finished successfully.');
+    assert.equal(store2.getTaskEvents('task-completed').length, 0);
+    assert.equal(store2.getCheckpoints('task-completed').length, 0);
+
+    const recoveredFailed = store2.getTask('task-failed');
+    assert.equal(recoveredFailed.status, 'failed');
+    assert.equal(recoveredFailed.message, 'Ran out of retries.');
+    assert.equal(store2.getTaskEvents('task-failed').length, 0);
+    assert.equal(store2.getCheckpoints('task-failed').length, 0);
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery-F. awaiting_approval tasks are untouched and never turned into automatic execution', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+    const task = makeInterruptedTask({
+      id: 'task-awaiting-approval',
+      status: 'awaiting_approval',
+      message: 'Waiting for approval'
+    });
+    store1.upsertTask(task);
+    store1.close();
+
+    const store2 = await openStore(dir);
+    const recovered = store2.getTask('task-awaiting-approval');
+
+    assert.equal(recovered.status, 'awaiting_approval');
+    assert.equal(recovered.message, 'Waiting for approval');
+    assert.equal(store2.getTaskEvents('task-awaiting-approval').length, 0);
+    assert.equal(store2.getCheckpoints('task-awaiting-approval').length, 0);
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery-G. tool-action needs_verification remains a manual boundary alongside task reconciliation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+    const task = makeInterruptedTask({ id: 'task-needs-verification', status: 'running' });
+    store1.upsertTask(task);
+
+    const inProgressAction = store1.recordToolAction({
+      taskId: 'task-needs-verification',
+      toolName: 'run_command',
+      args: { command: 'node', args: ['worker.js'] },
+      status: 'in_progress'
+    });
+    store1.close();
+
+    const store2 = await openStore(dir);
+
+    // Task-level reconciliation: running -> paused.
+    assert.equal(store2.getTask('task-needs-verification').status, 'paused');
+
+    // Tool-action-level reconciliation (pre-existing behavior) is unaffected
+    // by the new task reconciliation: it stays needs_verification, not
+    // silently turned back into executable/claimable work.
+    const checkedAction = store2.getToolAction(inProgressAction.idempotencyKey);
+    assert.equal(checkedAction.status, 'needs_verification');
+    assert.equal(
+      store2.getCompletedToolAction('task-needs-verification', 'run_command', { command: 'node', args: ['worker.js'] }),
+      null
+    );
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery-H. a corrupted latest checkpoint fails closed without blocking other tasks or hiding the corruption', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+
+    const corruptedTask = makeInterruptedTask({ id: 'task-corrupted-checkpoint', status: 'running' });
+    store1.upsertTask(corruptedTask);
+    const originalCheckpoint = store1.recordCheckpoint({
+      id: 'cp-corrupted-1',
+      taskId: 'task-corrupted-checkpoint',
+      status: 'running',
+      activeModel: 'qwen3:4b',
+      step: 3,
+      event: 'Step 3 in progress',
+      workspace: dir
+    });
+
+    // A second, unrelated interrupted task with a perfectly healthy history,
+    // to prove one corrupted task cannot block reconciliation of the rest.
+    const healthyTask = makeInterruptedTask({ id: 'task-healthy-sibling', status: 'running' });
+    store1.upsertTask(healthyTask);
+
+    // Directly tamper with the persisted checkpoint row (simulating disk
+    // corruption / external tampering), exactly as store.test.mjs test 14
+    // already does for the pre-existing recoverTask() integrity check.
+    store1.database.prepare(
+      'UPDATE checkpoints SET status = ? WHERE id = ?'
+    ).run('tampered_status', 'cp-corrupted-1');
+
+    store1.close();
+
+    const store2 = await openStore(dir);
+
+    // Startup did not throw, and the corrupted task was still moved to a
+    // safe, non-executing state rather than left as "running" or silently
+    // trusted as resumable.
+    const recoveredCorrupted = store2.getTask('task-corrupted-checkpoint');
+    assert.equal(recoveredCorrupted.status, 'paused');
+    assert.match(recoveredCorrupted.message, /failed integrity verification/);
+    assert.match(recoveredCorrupted.message, /manual verification/);
+
+    // The sibling task was reconciled normally and independently.
+    const recoveredHealthy = store2.getTask('task-healthy-sibling');
+    assert.equal(recoveredHealthy.status, 'paused');
+    assert.doesNotMatch(recoveredHealthy.message, /failed integrity verification/);
+
+    // The corrupted checkpoint row itself was never modified, replaced, or
+    // deleted — it is preserved unchanged as evidence.
+    const rawCorruptedRow = store2.database
+      .prepare('SELECT status, integrity_hash FROM checkpoints WHERE id = ?')
+      .get('cp-corrupted-1');
+    assert.ok(rawCorruptedRow);
+    assert.equal(rawCorruptedRow.status, 'tampered_status');
+    assert.equal(rawCorruptedRow.integrity_hash, originalCheckpoint.integrityHash);
+
+    // The corrupted checkpoint remains the latest durable checkpoint.
+    // Startup reconciliation must not create a replacement that could hide
+    // the corruption from the existing explicit-resume recovery path.
+    const allCheckpoints = store2.getCheckpoints('task-corrupted-checkpoint');
+    assert.equal(allCheckpoints.length, 1);
+    assert.equal(allCheckpoints[0].id, 'cp-corrupted-1');
+    assert.equal(allCheckpoints[0].status, 'tampered_status');
+    assert.equal(
+      store2.getLatestCheckpoint('task-corrupted-checkpoint').id,
+      'cp-corrupted-1'
+    );
+
+    let modelInvocations = 0;
+    let brokerExecutions = 0;
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store2.getTasks(),
+      saveTasks: async tasks => {
+        for (const item of tasks) store2.upsertTask(item);
+      },
+      getConfig: async () => ({
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 1,
+        allowedCommands: []
+      }),
+      toolBrokerFactory: async () => ({
+        execute: async () => {
+          brokerExecutions += 1;
+          return { ok: true };
+        }
+      }),
+      modelAdapter: async () => {
+        modelInvocations += 1;
+        return {
+          message: {
+            content: 'This model invocation must never occur for corrupted recovery.'
+          }
+        };
+      },
+      modelRouter: {},
+      toolSpec: [],
+      projectRoot: dir,
+      emit: () => {},
+      store: store2
+    });
+
+    // The existing runTask() recovery path must see the corrupted latest
+    // checkpoint and fail closed before any model/tool execution.
+    await orchestrator.runTask('task-corrupted-checkpoint');
+
+    assert.equal(modelInvocations, 0);
+    assert.equal(brokerExecutions, 0);
+    assert.equal(
+      store2.getTask('task-corrupted-checkpoint').status,
+      'paused'
+    );
+
+    // The failed resume attempt must not create a replacement checkpoint:
+    // the original corrupted checkpoint must remain the latest durable evidence.
+    const checkpointsAfterResume = store2.getCheckpoints(
+      'task-corrupted-checkpoint'
+    );
+    assert.equal(checkpointsAfterResume.length, 1);
+    assert.equal(checkpointsAfterResume[0].id, 'cp-corrupted-1');
+    assert.equal(
+      store2.getLatestCheckpoint('task-corrupted-checkpoint').id,
+      'cp-corrupted-1'
+    );
+
+    // The original corrupted evidence remains unchanged even after the
+    // explicit resume attempt.
+    const rawCorruptedRowAfterResume = store2.database
+      .prepare('SELECT status, integrity_hash FROM checkpoints WHERE id = ?')
+      .get('cp-corrupted-1');
+
+    assert.equal(rawCorruptedRowAfterResume.status, 'tampered_status');
+    assert.equal(
+      rawCorruptedRowAfterResume.integrity_hash,
+      originalCheckpoint.integrityHash
+    );
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery-I. a successful tool action is never replayed or altered by startup reconciliation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+    const task = makeInterruptedTask({ id: 'task-success-preserved', status: 'running' });
+    store1.upsertTask(task);
+
+    const successAction = store1.recordToolAction({
+      taskId: 'task-success-preserved',
+      toolName: 'write_file',
+      args: { path: 'a.txt', content: 'done' },
+      status: 'success',
+      resultSummary: JSON.stringify({ ok: true })
+    });
+    store1.close();
+
+    const store2 = await openStore(dir);
+
+    assert.equal(store2.getTask('task-success-preserved').status, 'paused');
+
+    const checkedAction = store2.getToolAction(successAction.idempotencyKey);
+    assert.equal(checkedAction.status, 'success');
+    assert.equal(checkedAction.resultSummary, JSON.stringify({ ok: true }));
+
+    assert.ok(
+      store2.getCompletedToolAction('task-success-preserved', 'write_file', { path: 'a.txt', content: 'done' })
+    );
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery-J. the persisted transcript is never fabricated or duplicated by reconciliation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+    const task = makeInterruptedTask({ id: 'task-transcript-preserved', status: 'switching_model' });
+    store1.upsertTask(task);
+
+    store1.appendTaskMessage({
+      taskId: 'task-transcript-preserved',
+      message: { role: 'system', content: 'You are a helpful assistant.' }
+    });
+    store1.appendTaskMessage({
+      taskId: 'task-transcript-preserved',
+      message: { role: 'user', content: task.goal }
+    });
+    store1.close();
+
+    const store2 = await openStore(dir);
+
+    assert.equal(store2.getTask('task-transcript-preserved').status, 'paused');
+
+    const transcript = store2.getTaskMessages('task-transcript-preserved').map(item => item.message);
+    assert.deepEqual(
+      transcript.map(item => item.role),
+      ['system', 'user']
+    );
+    assert.equal(transcript[1].content, task.goal);
+
+    // Recover again explicitly: transcript must still be exactly two entries.
+    store2.reconcileInterruptedTasks();
+    assert.equal(store2.getTaskMessages('task-transcript-preserved').length, 2);
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery-K. restart followed by explicit resume uses the existing runTask path safely', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+    const task = makeInterruptedTask({
+      id: 'task-resume-after-recovery',
+      status: 'running',
+      message: 'Working on it.'
+    });
+    store1.upsertTask(task);
+    store1.appendTaskMessage({
+      taskId: task.id,
+      message: { role: 'system', content: 'You are a helpful assistant.' }
+    });
+    store1.appendTaskMessage({
+      taskId: task.id,
+      message: { role: 'user', content: task.goal }
+    });
+    store1.close();
+
+    // Simulated restart: reconciliation runs automatically on reopen.
+    const store2 = await openStore(dir);
+    const reconciled = store2.getTask(task.id);
+    assert.equal(reconciled.status, 'paused');
+    assert.match(reconciled.message, /Startup recovery/);
+
+    let brokerExecutions = 0;
+    let modelInvocations = 0;
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store2.getTasks(),
+      saveTasks: async tasks => {
+        for (const item of tasks) store2.upsertTask(item);
+      },
+      getConfig: async () => ({
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 1,
+        allowedCommands: ['node']
+      }),
+      toolBrokerFactory: async () => ({
+        execute: async () => {
+          brokerExecutions += 1;
+          return { data: 'tool_output' };
+        }
+      }),
+      modelAdapter: async () => {
+        modelInvocations += 1;
+        return { message: { content: 'All done, nothing further needed.' } };
+      },
+      toolSpec: [],
+      projectRoot: dir,
+      emit: () => {},
+      store: store2
+    });
+
+    // Mirror exactly what the existing POST /api/tasks/:id/continue endpoint
+    // does to resume a paused task: paused -> queued, then runTask(). This
+    // is the pre-existing, unmodified resume path — reconciliation does not
+    // change it and does not need to.
+    await orchestrator.updateTask(reconciled, item => {
+      transitionTask(item, 'queued');
+      item.message = 'Queued to resume from its latest checkpoint.';
+      orchestrator.checkpoint(item, 'User requested continuation');
+    });
+
+    await orchestrator.runTask(task.id);
+
+    // The model was invoked fresh (this is new, legitimate work happening
+    // now — not a replay of anything from before the crash), and no tool
+    // action from before the crash was ever re-executed by reconciliation
+    // itself.
+    assert.equal(modelInvocations, 1);
+    assert.equal(brokerExecutions, 0);
+
+    const finalTask = store2.getTask(task.id);
+    assert.notEqual(finalTask.status, 'running');
+
+    // Original pre-crash transcript entries are intact and not duplicated;
+    // only new, legitimate messages were appended by the real resumed run.
+    const transcript = store2.getTaskMessages(task.id).map(item => item.message);
+    assert.equal(transcript[0].role, 'system');
+    assert.equal(transcript[1].role, 'user');
+    assert.equal(transcript[1].content, task.goal);
+    assert.equal(transcript.filter(item => item.role === 'user').length, 1);
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery-L. reconciliation never overwrites a task whose status changed concurrently between scan and write', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+    const task = makeInterruptedTask({ id: 'task-concurrent-change', status: 'running' });
+    store1.upsertTask(task);
+    store1.close();
+
+    const store2 = await openStore(dir);
+    // openStore() already ran the automatic pass; reset it back to
+    // 'running' directly at the row level so we can exercise the guard on
+    // an explicit second pass without going through any public transition.
+    store2.database.prepare('DELETE FROM task_events WHERE task_id = ?').run('task-concurrent-change');
+    store2.database.prepare('DELETE FROM checkpoints WHERE task_id = ?').run('task-concurrent-change');
+    const runningAgain = { ...store2.getTask('task-concurrent-change'), status: 'running', message: 'Back to running for the test.' };
+    store2.upsertTask(runningAgain);
+
+    const results = store2.reconcileInterruptedTasks(scannedTaskCopy => {
+      if (scannedTaskCopy.id !== 'task-concurrent-change') return;
+      // Simulate a concurrent lifecycle change landing between the scan and
+      // the guarded write: something else resolves this task to 'completed'.
+      const concurrentlyChanged = { ...store2.getTask('task-concurrent-change'), status: 'completed', message: 'Resolved by someone else.' };
+      store2.upsertTask(concurrentlyChanged);
+    });
+
+    const outcome = results.find(r => r.taskId === 'task-concurrent-change');
+    assert.ok(outcome);
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.skipped, true);
+
+    // Reconciliation must not have clobbered the concurrent change.
+    const finalTask = store2.getTask('task-concurrent-change');
+    assert.equal(finalTask.status, 'completed');
+    assert.equal(finalTask.message, 'Resolved by someone else.');
+    assert.equal(store2.getTaskEvents('task-concurrent-change').length, 0);
+    assert.equal(store2.getCheckpoints('task-concurrent-change').length, 0);
+
+    store2.close();
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
