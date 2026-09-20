@@ -256,6 +256,151 @@ test('approved persisted mutation exposes an exact-action orchestrator executor'
   }
 });
 
+test('consumed successful approval resumes an awaiting task after restart without broker replay', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'approval-consumed-recovery-test-'));
+  let store = null;
+
+  try {
+    store = await openStore(dir);
+
+    const taskId = 'task-consumed-recovery';
+    const actionId = 'action-consumed-recovery';
+    const approvalId = 'approval-consumed-recovery';
+    const toolCallId = 'consumed-recovery-tool-call';
+    const args = {
+      path: 'recovery-resume.txt',
+      content: 'already approved content'
+    };
+    const resultSummary = JSON.stringify({
+      ok: true,
+      path: args.path
+    });
+
+    const task = {
+      id: taskId,
+      goal: 'Resume consumed approval after restart',
+      status: 'awaiting_approval',
+      message: 'Waiting for approval',
+      activeModel: 'qwen3:4b',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      checkpoints: [],
+      switches: []
+    };
+
+    store.upsertTask(task);
+
+    store.appendTaskMessage({
+      taskId,
+      message: {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: toolCallId,
+            function: {
+              name: 'write_file',
+              arguments: JSON.stringify(args)
+            }
+          }
+        ]
+      }
+    });
+
+    store.recordToolAction({
+      id: actionId,
+      taskId,
+      toolName: 'write_file',
+      toolCallId,
+      args,
+      policyDecision: 'requires_approval',
+      status: 'success',
+      resultSummary
+    });
+
+    store.appendTaskMessage({
+      id: `tool-result:${actionId}`,
+      taskId,
+      message: {
+        role: 'tool',
+        tool_call_id: toolCallId,
+        content: resultSummary
+      }
+    });
+
+    store.createApprovalRequest({
+      id: approvalId,
+      taskId,
+      toolActionId: actionId,
+      toolName: 'write_file',
+      args,
+      expiresAt: new Date(Date.now() + 300_000).toISOString()
+    });
+
+    store.resolveApprovalRequest(approvalId, {
+      status: 'approved',
+      resolutionReason: 'Approved before simulated restart.'
+    });
+
+    store.consumeApprovalRequest(approvalId, {
+      taskId,
+      toolActionId: actionId,
+      toolName: 'write_file',
+      args
+    });
+
+    let brokerCalls = 0;
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => [store.getTask(taskId)].filter(Boolean),
+      saveTasks: async tasks => {
+        for (const item of tasks) {
+          store.upsertTask(item);
+        }
+      },
+      getConfig: async () => ({
+        allowWrites: false,
+        allowedCommands: []
+      }),
+      toolBrokerFactory: async () => ({
+        execute: async () => {
+          brokerCalls += 1;
+          throw new Error('BROKER MUST NOT REPLAY A CONSUMED SUCCESS');
+        }
+      }),
+      modelAdapter: async () => {
+        throw new Error('Model must not be invoked during consumed-success recovery');
+      },
+      modelRouter: {},
+      toolSpec: [],
+      projectRoot: dir,
+      emit: () => {},
+      store
+    });
+
+    const result = await orchestrator.executeApprovedAction({
+      taskId,
+      approvalId
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.replayed, true);
+    assert.equal(result.resumed, true);
+    assert.equal(result.approval.status, 'consumed');
+    assert.equal(brokerCalls, 0);
+    assert.equal(store.getTask(taskId).status, 'running');
+
+    const transcript = store.getTaskMessages(taskId).map(item => item.message);
+    assert.equal(transcript.length, 2);
+    assert.equal(transcript[0].tool_calls[0].id, toolCallId);
+    assert.equal(transcript[1].tool_call_id, toolCallId);
+    assert.equal(transcript[1].content, resultSummary);
+  } finally {
+    store?.close?.();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('denied approval never reaches the broker', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'approval-denied-test-'));
   let store = null;

@@ -1216,12 +1216,15 @@ export function createOrchestrator({
     // approval request to be consumed. Never execute the broker again.
     if (action.status === 'success') {
       if (approval.status === 'consumed') {
+        const resumed = await resumeApprovedTask();
+
         return {
           ok: true,
           replayed: true,
+          resumed,
           approval,
           action,
-          result: null
+          result: action.resultSummary
         };
       }
 
