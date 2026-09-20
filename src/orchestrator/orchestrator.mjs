@@ -256,6 +256,78 @@ export function createOrchestrator({
     return { ok: true, status: 'paused' };
   }
 
+  async function resumeTask(taskId) {
+    const tasks = await getTasks();
+    const task = tasks.find(item => item.id === taskId);
+
+    if (!task) {
+      return {
+        ok: false,
+        error: 'Task not found.',
+        statusCode: 404
+      };
+    }
+
+    if (task.status === 'awaiting_approval') {
+      return {
+        ok: false,
+        error: 'Task is awaiting approval. Approve or deny the pending approval request.',
+        statusCode: 409
+      };
+    }
+
+    if (
+      task.status !== 'paused' &&
+      task.status !== 'needs_setup' &&
+      task.status !== 'queued'
+    ) {
+      return {
+        ok: false,
+        error: `Cannot resume task with status "${task.status}".`,
+        statusCode: 409,
+        status: task.status
+      };
+    }
+
+    if (store?.recoverTask) {
+      const recovery = store.recoverTask(taskId);
+
+      if (!recovery.ok) {
+        emit?.('recovery_required', {
+          taskId,
+          reason: recovery.error || 'Task integrity check failed'
+        });
+
+        return {
+          ok: false,
+          error: `Recovery required: ${recovery.error}`,
+          statusCode: 409,
+          recoveryRequired: true
+        };
+      }
+    }
+
+    if (
+      task.status === 'paused' ||
+      task.status === 'needs_setup'
+    ) {
+      await updateTask(task, item => {
+        item.status = 'queued';
+        item.message = 'Queued to resume from its latest checkpoint.';
+        checkpoint(item, 'User requested continuation');
+      });
+    }
+
+    queueMicrotask(() => {
+      runTask(taskId).catch(() => {});
+    });
+
+    return {
+      ok: true,
+      status: 'queued'
+    };
+  }
+
   async function runTask(taskId) {
     const tasks = await getTasks();
     const task = tasks.find(item => item.id === taskId);
@@ -1480,6 +1552,7 @@ export function createOrchestrator({
   return {
     checkpoint,
     updateTask,
+    resumeTask,
     runTask,
     pauseTask,
     executeApprovedAction

@@ -9,7 +9,8 @@ import { before, after, test } from 'node:test';
 
 import {
   openStore,
-  computeToolIdempotencyKey
+  computeToolIdempotencyKey,
+  computeCheckpointHash
 } from '../src/store.mjs';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -314,6 +315,79 @@ test('deny route resolves approval without executing the action', async () => {
 
   assert.equal(approval.status, 'denied');
   assert.equal(action.status, 'pending');
+});
+
+test('continue route fails closed before creating a new checkpoint when the latest checkpoint is corrupted', async () => {
+  const taskId = 'task-corrupted-continue-api';
+  const checkpointId = 'cp-corrupted-continue-api';
+
+  await seedStore.upsertTask({
+    id: taskId,
+    goal: 'Corrupted continue verification task',
+    status: 'paused',
+    message: 'Task paused before resume.',
+    activeModel: 'qwen3:4b',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    steps: [],
+    checkpoints: [],
+    switches: []
+  });
+
+  const checkpointData = {
+    id: checkpointId,
+    taskId,
+    createdAt: '2026-01-01T00:00:01.000Z',
+    event: 'Task paused',
+    status: 'paused',
+    activeModel: 'qwen3:4b',
+    step: 0,
+    workspace: projectDir
+  };
+
+  seedStore.recordCheckpoint({
+    ...checkpointData,
+    integrityHash: computeCheckpointHash(checkpointData)
+  });
+
+  seedStore.database
+    .prepare('UPDATE checkpoints SET step = ? WHERE id = ?')
+    .run(999, checkpointId);
+
+  const result = await request(
+    'POST',
+    `/api/tasks/${taskId}/continue`
+  );
+
+  assert.equal(result.status, 409);
+  assert.equal(result.body?.recoveryRequired, true);
+  assert.match(
+    result.body?.error || '',
+    /Corrupted checkpoint integrity/
+  );
+
+  const after = seedStore
+    .getTasks()
+    .find(item => item.id === taskId);
+
+  assert.equal(after?.status, 'paused');
+
+  const checkpoints = seedStore.getCheckpoints(taskId);
+  assert.equal(checkpoints.length, 1);
+  assert.equal(checkpoints[0].id, checkpointId);
+
+  const raw = seedStore.database
+    .prepare(
+      'SELECT step, integrity_hash FROM checkpoints WHERE id = ?'
+    )
+    .get(checkpointId);
+
+  assert.ok(raw);
+  assert.equal(raw.step, 999);
+  assert.equal(
+    raw.integrity_hash,
+    computeCheckpointHash(checkpointData)
+  );
 });
 
 test('continue route does not bypass awaiting approval', async () => {

@@ -750,51 +750,21 @@ const server = createServer(async (request, response) => {
     const match = url.pathname.match(
       /^\/api\/tasks\/([^/]+)\/continue$/
     );
-
     if (
       request.method === 'POST' &&
       match
     ) {
-      const tasks = await getTasks();
-      const task = tasks.find(
-        item => item.id === match[1]
-      );
+      const resumed = await orchestrator.resumeTask(match[1]);
 
-      if (!task) {
-        return json(response, 404, {
-          error: 'Task not found.'
+      if (!resumed.ok) {
+        return json(response, resumed.statusCode || 409, {
+          error: resumed.error,
+          recoveryRequired: Boolean(resumed.recoveryRequired)
         });
       }
-
-      if (task.status === 'awaiting_approval') {
-        return json(response, 409, {
-          error: 'Task is awaiting approval. Approve or deny the pending approval request.'
-        });
-      }
-
-      if (
-        task.status === 'paused' ||
-        task.status === 'needs_setup'
-      ) {
-        await orchestrator.updateTask(task, item => {
-          item.status = 'queued';
-          item.message =
-            'Queued to resume from its latest checkpoint.';
-
-          orchestrator.checkpoint(
-            item,
-            'User requested continuation'
-          );
-        });
-      }
-
-      queueMicrotask(() =>
-        orchestrator.runTask(match[1])
-      );
 
       return json(response, 202, { ok: true });
     }
-
     // GET /api/tasks/:id/snapshot
     // Returns a bounded, sanitized snapshot of one task for UI reconnect.
     // Intent: snapshot first -> event stream (from /events?lastSeq=N) -> continue.
