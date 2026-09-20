@@ -2470,6 +2470,148 @@ test('recovery-H. a corrupted latest checkpoint fails closed without blocking ot
   }
 });
 
+test('recovery-M. an explicit resume attempt on a task with a corrupted checkpoint still fails closed with no execution', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
+  try {
+    const store1 = await openStore(dir);
+
+    const task = makeInterruptedTask({
+      id: 'task-corrupted-resume-attempt',
+      status: 'running'
+    });
+    store1.upsertTask(task);
+
+    const originalCheckpoint = store1.recordCheckpoint({
+      id: 'cp-corrupted-resume-1',
+      taskId: 'task-corrupted-resume-attempt',
+      status: 'running',
+      activeModel: 'qwen3:4b',
+      step: 2,
+      event: 'Step 2 in progress',
+      workspace: dir
+    });
+
+    store1.appendTaskMessage({
+      taskId: task.id,
+      message: {
+        role: 'system',
+        content: 'You are a helpful assistant.'
+      }
+    });
+
+    store1.appendTaskMessage({
+      taskId: task.id,
+      message: {
+        role: 'user',
+        content: task.goal
+      }
+    });
+
+    // Tamper with the persisted checkpoint row, simulating corruption.
+    store1.database.prepare(
+      'UPDATE checkpoints SET step = ? WHERE id = ?'
+    ).run(999, 'cp-corrupted-resume-1');
+
+    store1.close();
+
+    // Simulated restart: reconciliation runs automatically on reopen.
+    const store2 = await openStore(dir);
+
+    const reconciled = store2.getTask('task-corrupted-resume-attempt');
+    assert.equal(reconciled.status, 'paused');
+    assert.match(
+      reconciled.message,
+      /failed integrity verification/
+    );
+
+    // The corrupted checkpoint remains the latest checkpoint after
+    // reconciliation alone (no masking checkpoint was created).
+    const latestBeforeResume =
+      store2.getLatestCheckpoint('task-corrupted-resume-attempt');
+
+    assert.equal(latestBeforeResume.id, 'cp-corrupted-resume-1');
+    assert.equal(
+      store2.getCheckpoints('task-corrupted-resume-attempt').length,
+      1
+    );
+
+    let brokerExecutions = 0;
+    let modelInvocations = 0;
+
+    const orchestrator = createOrchestrator({
+      getTasks: async () => store2.getTasks(),
+      saveTasks: async tasks => {
+        for (const item of tasks) {
+          store2.upsertTask(item);
+        }
+      },
+      getConfig: async () => ({
+        preferredModel: 'qwen3:4b',
+        fallbacks: [],
+        maxSteps: 1,
+        allowedCommands: ['node']
+      }),
+      toolBrokerFactory: async () => ({
+        execute: async () => {
+          brokerExecutions += 1;
+          return { data: 'tool_output' };
+        }
+      }),
+      modelAdapter: async () => {
+        modelInvocations += 1;
+        return {
+          message: {
+            content: 'All done, nothing further needed.'
+          }
+        };
+      },
+      toolSpec: [],
+      projectRoot: dir,
+      emit: () => {},
+      store: store2
+    });
+
+    // Explicitly attempt the existing resume/runTask path. This must go
+    // through the existing recoverTask() integrity check and fail closed.
+    await orchestrator.runTask('task-corrupted-resume-attempt');
+
+    const afterResumeAttempt =
+      store2.getTask('task-corrupted-resume-attempt');
+
+    assert.equal(afterResumeAttempt.status, 'paused');
+    assert.notEqual(afterResumeAttempt.status, 'running');
+    assert.equal(modelInvocations, 0);
+    assert.equal(brokerExecutions, 0);
+
+    // The originally corrupted checkpoint row remains unchanged.
+    const rawCorruptedRow = store2.database
+      .prepare(
+        'SELECT step, integrity_hash FROM checkpoints WHERE id = ?'
+      )
+      .get('cp-corrupted-resume-1');
+
+    assert.ok(rawCorruptedRow);
+    assert.equal(rawCorruptedRow.step, 999);
+    assert.equal(
+      rawCorruptedRow.integrity_hash,
+      originalCheckpoint.integrityHash
+    );
+
+    // The pre-crash transcript remains exactly intact.
+    const transcript = store2
+      .getTaskMessages('task-corrupted-resume-attempt')
+      .map(item => item.message);
+
+    assert.equal(transcript.length, 2);
+    assert.equal(transcript[0].role, 'system');
+    assert.equal(transcript[1].role, 'user');
+
+    store2.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('recovery-I. a successful tool action is never replayed or altered by startup reconciliation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'store-test-'));
   try {
