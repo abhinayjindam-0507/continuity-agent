@@ -2652,6 +2652,15 @@
           ? `Durable evidence available${evidence.relativePath ? ` · ${evidence.relativePath}` : ''}`
           : 'No durable change evidence available';
 
+        const diffPath =
+          typeof evidence.relativePath === 'string' && evidence.relativePath.trim()
+            ? evidence.relativePath.trim()
+            : (typeof args.path === 'string' && args.path.trim() ? args.path.trim() : '');
+
+        const inspectButton = diffPath
+          ? `<button class="btn-sync recovery-inspect-diff" type="button" data-recovery-path="${escAttr(diffPath)}" style="width: auto; padding: 4px 8px; font-size: 10px;">Inspect Diff</button>`
+          : '';
+
         return `
           <div class="recovery-action-row">
             <div style="display:flex;justify-content:space-between;gap:8px;">
@@ -2672,9 +2681,27 @@
             <div style="margin-top:3px;color:var(--text-dim);">
               Status: needs_verification
             </div>
+            ${inspectButton ? `<div style="display:flex;justify-content:flex-end;margin-top:6px;">${inspectButton}</div>` : ''}
           </div>
         `;
       }).join('');
+
+      actionsEl.querySelectorAll('.recovery-inspect-diff').forEach(button => {
+        button.onclick = async () => {
+          const path = button.getAttribute('data-recovery-path');
+          const taskId = activeTaskId;
+
+          if (!path || !taskId) return;
+
+          button.disabled = true;
+
+          try {
+            await inspectRecoveryActionDiff(taskId, path);
+          } finally {
+            button.disabled = false;
+          }
+        };
+      });
 
       if (statusEl) {
         statusEl.textContent =
@@ -3701,6 +3728,18 @@ ${esc(args)}</div>`;
       renderProjectTree();
       resetEditorChrome();
       renderEditorMessage('Select a file from Project Files to view its contents.');
+    }
+
+    async function inspectRecoveryActionDiff(taskId, path) {
+      if (!taskId || taskId !== activeTaskId) return;
+      if (typeof path !== 'string' || !path.trim()) return;
+
+      selectedFilePath = path.trim();
+      renderProjectTree();
+
+      if (taskId !== activeTaskId) return;
+
+      await inspectSelectedFileDiff();
     }
 
     async function inspectSelectedFileDiff() {

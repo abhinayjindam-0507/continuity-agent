@@ -462,3 +462,22 @@ test('4h. recovery UI uses the read-only recovery inspection API', async () => {
   assert.doesNotMatch(html, /approveRecovery/);
   assert.doesNotMatch(html, /denyRecovery/);
 });
+
+test('4i. recovery actions expose only a read-only Inspect Diff bridge', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(
+    new URL('../src/index.html', import.meta.url),
+    'utf8'
+  );
+
+  assert.match(html, /recovery-inspect-diff/);
+  assert.match(html, /data-recovery-path/);
+  assert.match(html, /function inspectRecoveryActionDiff\(taskId, path\)/);
+  assert.match(html, /await inspectSelectedFileDiff\(\)/);
+
+  assert.doesNotMatch(
+    html,
+    /\/api\/project\/(write|patch|delete|rename|move|upload|mkdir)/,
+    'Recovery diff inspection must remain read-only'
+  );
+});
