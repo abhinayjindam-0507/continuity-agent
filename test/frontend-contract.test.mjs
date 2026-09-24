@@ -434,3 +434,31 @@ test('4g. approval UI uses the durable approval API and exact decision binding',
     /btnDeny\.onclick = \(\) => resolveApproval\('deny'\)/
   );
 });
+
+test('4h. recovery UI uses the read-only recovery inspection API', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(
+    new URL('../src/index.html', import.meta.url),
+    'utf8'
+  );
+
+  assert.match(html, /id="recoveryCard"/);
+  assert.match(html, /id="recoveryActions"/);
+  assert.match(html, /id="recoveryCount"/);
+  assert.match(html, /function renderRecoveryCard\(data\)/);
+  assert.match(html, /function loadTaskRecovery\(taskId\)/);
+  assert.match(
+    html,
+    /`\/api\/tasks\/\$\{encodeURIComponent\(taskId\)\}\/recovery`/
+  );
+  assert.match(html, /function scheduleRecoveryRefresh\(taskId\)/);
+  assert.match(html, /scheduleRecoveryRefresh\(taskId\)/);
+  assert.match(html, /loadTaskRecovery\(activeTaskId\)/);
+  assert.match(html, /loadTaskRecovery\(id\)/);
+  assert.match(html, /type === 'recovery_required'/);
+  assert.match(html, /Inspection only/);
+
+  assert.doesNotMatch(html, /resolveRecovery/);
+  assert.doesNotMatch(html, /approveRecovery/);
+  assert.doesNotMatch(html, /denyRecovery/);
+});
